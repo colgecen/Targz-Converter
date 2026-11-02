@@ -84,13 +84,16 @@ def _write_launcher() -> Path:
 
 
 def _app_icon() -> str:
-    """Aracın kendi simgesini temaya koyar; yoksa arşiv simgesini kullanır."""
-    source = source_root() / "assets" / "targz-converter.svg"
-    if not source.is_file():
+    source_svg = source_root() / "assets" / "targz-converter.svg"
+    source_png = source_root() / "assets" / "targz-converter.png"
+    if not source_svg.is_file() and not source_png.is_file():
         return "application-x-compressed-tar"
     folder = ICON_DIR / "scalable" / "apps"
     folder.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, folder / f"{APP_ID}.svg")
+    if source_svg.is_file():
+        shutil.copy2(source_svg, folder / f"{APP_ID}.svg")
+    if source_png.is_file():
+        shutil.copy2(source_png, folder / f"{APP_ID}.png")
     return APP_ID
 
 
@@ -219,6 +222,7 @@ def uninstall() -> list[str]:
         APP_DIR / "kio" / "servicemenus" / f"{APP_ID}.desktop",
         APP_DIR / "nautilus" / "scripts" / "Targz Converter ile uygulamaya cevir",
         ICON_DIR / "scalable" / "apps" / f"{APP_ID}.svg",
+        ICON_DIR / "scalable" / "apps" / f"{APP_ID}.png",
     ] + [desk / "Targz Converter.desktop" for desk in desks]
     for target in targets:
         try:
