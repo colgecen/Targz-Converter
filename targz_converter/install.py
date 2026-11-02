@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
 
 from .core import log
 from .desktop import (APP_DIR, AUTOSTART_DIR, ICON_DIR, Shortcut, desktop_dir,
-                      refresh_caches, write_desktop)
+                      refresh_caches, trust_file, write_desktop)
 
 APP_ID = "com.github.colgecen.TargzConverter"
 DATA_DIR = APP_DIR / "targz-converter"
@@ -158,6 +159,7 @@ def service_menu(launcher: Path) -> Path:
         f"Exec={quick} %f\n",
         encoding="utf-8",
     )
+    trust_file(target)
     return target
 
 
@@ -210,6 +212,13 @@ def install(desktop: bool = False, autostart: bool = False) -> list[Path]:
     log("Targz Converter kuruluyor...")
     log(f"  program kopyası: {_copy_package()}")
     written = list(installer_files(desktop=desktop, autostart=autostart).values())
+    # SELinux etiketlerini düzelt (varsa)
+    if shutil.which("restorecon"):
+        try:
+            subprocess.run(["restorecon", "-R"] + [str(p) for p in written],
+                           capture_output=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            pass
     refresh_caches()
     for path in written:
         log(f"  eklendi: {path}")
