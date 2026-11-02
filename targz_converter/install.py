@@ -32,7 +32,8 @@ LAUNCHER = "targz-converter"
 SHELL_LAUNCHER = "targz-converter-hazir-ac"
 SERVICE_MIME = ("application/gzip;application/x-compressed-tar;application/x-tar;"
                 "application/x-xz-compressed-tar;application/x-bzip2-compressed-tar;"
-                "application/x-zstd-compressed-tar;application/x-appimage;")
+                "application/x-zstd-compressed-tar;application/x-appimage;"
+                "application/x-rpm;application/x-deb;")
 
 
 def source_root() -> Path:

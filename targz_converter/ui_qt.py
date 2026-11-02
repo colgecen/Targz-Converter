@@ -17,13 +17,10 @@ from PySide6.QtWidgets import (
 from . import core, desktop
 
 WINDOW_TITLE = "Targz Converter — arşivi sürükle, uygulama olsun"
-ACCEPTED = (".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".tar.zst",
-            ".tzst", ".tar", ".appimage", ".run")
 
 
 def _is_supported(path: Path) -> bool:
-    name = path.name.lower()
-    return any(name.endswith(suffix) for suffix in ACCEPTED)
+    return core.is_supported(path)
 
 
 class Worker(QThread):

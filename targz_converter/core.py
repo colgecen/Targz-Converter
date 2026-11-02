@@ -177,6 +177,15 @@ def download_dir() -> Path:
     return Path.home()
 
 
+SUPPORTED_SUFFIXES = (".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".tar.lz4",
+                      ".tar.zst", ".tzst", ".tar", ".appimage", ".run", ".rpm", ".deb")
+
+
+def is_supported(path: Path) -> bool:
+    """Tahmini bir uygulama dosyası mı? (arşiv + tek dosyalık + paketler)"""
+    return path.suffix.lower() in SUPPORTED_SUFFIXES
+
+
 def is_single_file_app(path: Path) -> bool:
     return path.suffix.lower() in SINGLE_FILE_SUFFIXES
 
@@ -330,10 +339,17 @@ def wanted_tokens(stem: str, root: str = "") -> set[str]:
     return wanted - {""}
 
 
-def pick_exe(scan_result: Scan, wanted: set[str]) -> Candidate | None:
+def pick_exe(scan_result: Scan, wanted: set[str], prefer_bin: bool = False) -> Candidate | None:
     if not scan_result.exes:
         return None
-    best = max(scan_result.exes,
+    pool = scan_result.exes
+    if prefer_bin:
+        # RPM/DEB gibi paketlerde /usr/bin/... altında gerçek ikili vardır; önce onu tercih et.
+        bin_pool = [c for c in scan_result.exes
+                    if any(part.lower() in ("bin", "sbin") for part in c.path.split("/")[:-1])]
+        if bin_pool:
+            pool = bin_pool
+    best = max(pool,
                key=lambda c: (c.score + _name_bonus(Path(c.path).name, wanted), c.size))
     return best
 
@@ -426,6 +442,100 @@ def _relax_exec(root: Path) -> None:
                     pass
 
 
+BIN_PARENTS = {"bin", "sbin", "appbin", "bin64", "cmd", "usr/bin", "usr/sbin",
+                "usr/local/bin", "local/bin", "sbin64", "bin32"}
+
+
+def scan_directory(base: Path) -> Scan:
+    """Çıkarılan bir klasör ağacını tarlar (RPM/DEB akışı için).
+
+    Adaylar `base`'e göre görelidir ve kök adı boşturulur: aday yolu uygulamanın
+    kendi yoludur. `parts` dizisi dosya yolundaki bölümlerden oluşur
+    ("./usr/bin/x" -> ["usr", "bin", "x"]).
+    """
+    result = Scan()
+    if not base.is_dir():
+        raise NotADirectoryError(str(base))
+    for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
+        rel_dir = Path(dirpath).relative_to(base).as_posix()
+        parts = [] if rel_dir == "." else rel_dir.split("/")
+        parent_dir = parts[-2].lower() if len(parts) >= 2 else ""
+        if len(parts) > 3:
+            dirnames[:] = [d for d in dirnames if not (d.lower() in SKIP_DIRS or d.startswith("."))]
+            continue
+        helper_hit = any(part.lower() in SKIP_DIRS for part in parts[1:])
+        if helper_hit and parent_dir not in BIN_PARENTS and len(parts) > 1:
+            dirnames[:] = [d for d in dirnames if not (d.lower() in SKIP_DIRS or d.startswith("."))]
+            continue
+        for filename in sorted(filenames):
+            if len(parts) > 3:
+                continue
+            path = Path(dirpath) / filename
+            low = filename.lower()
+            if low.startswith(("tv_", "setup", "unins", "crashpad")) or "crashpad" in low:
+                continue
+            try:
+                size = path.stat().st_size
+                executable = bool(path.stat().st_mode & 0o111) or parent_dir in BIN_PARENTS
+            except OSError:
+                continue
+            if not size:
+                continue
+            score = (120 - len(parts) * 10) if executable else 0
+            magic = b""
+            try:
+                with path.open("rb") as handle:
+                    magic = handle.read(4)
+            except OSError:
+                magic = b""
+            if magic.startswith(_ELF):
+                score += 60
+            elif magic.startswith(b"#!"):
+                score += 25
+            elif not magic.startswith(_PNG):
+                score -= 90
+            if score <= 0:
+                continue
+            candidate_path = path.relative_to(base).as_posix()
+            result.exes.append(Candidate(candidate_path, size, score))
+            icon_score = _icon_score(parts + [filename], size)
+            if icon_score:
+                result.icons.append(Candidate(candidate_path, size, icon_score))
+    return result
+
+
+def _unpack_rpm(archive: Path, dest: Path, progress=None) -> str:
+    """rpm2cpio | cpio -idm ile RPM paketini açar."""
+    dest.mkdir(parents=True, exist_ok=True)
+    rpm2cpio = shutil.which("rpm2cpio")
+    cpio = shutil.which("cpio")
+    if not rpm2cpio or not cpio:
+        raise RuntimeError("RPM açmak için rpm2cpio ve cpio gerekli "
+                           "(apt: rpm2cpio cpio | dnf: rpm2cpio cpio).")
+    done = subprocess.run(["sh", "-c", f"{rpm2cpio} {archive} | {cpio} -idm"],
+                           cwd=str(dest), capture_output=True, text=True, timeout=3600)
+    if done.returncode != 0:
+        raise RuntimeError(f"RPM açılamadı: {(done.stderr or done.stdout).strip()[:300]}")
+    if progress:
+        progress(1.0)
+    return "rpm2cpio+cpio"
+
+
+def _unpack_deb(archive: Path, dest: Path, progress=None) -> str:
+    """dpkg-deb -x ile DEB paketini açar."""
+    dest.mkdir(parents=True, exist_ok=True)
+    dpkg_deb = shutil.which("dpkg-deb")
+    if not dpkg_deb:
+        raise RuntimeError("DEB açmak için dpkg-deb gerekli (apt: dpkg).")
+    done = subprocess.run(["dpkg-deb", "-x", str(archive), str(dest)],
+                           capture_output=True, text=True, timeout=3600)
+    if done.returncode != 0:
+        raise RuntimeError(f"DEB açılamadı: {(done.stderr or done.stdout).strip()[:300]}")
+    if progress:
+        progress(1.0)
+    return "dpkg-deb"
+
+
 # --------------------------------------------------------------------------- #
 # 4. Uçtan uca dönüşüm
 # --------------------------------------------------------------------------- #
@@ -455,6 +565,32 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
                    slug=slugify(app_name), categories=guess_categories(stem, app_name),
                    single_file=True, size=exe.stat().st_size,
                    seconds=time.time() - started)
+
+    if archive.suffix.lower() in (".rpm", ".deb"):
+        # RPM/DEB: arşiv motoru yok; paket kutusundaki içerik aynı akışta açılır.
+        started = time.time()
+        target = _install_dir(base, slugify(stem))
+        engine = (_unpack_rpm if archive.suffix.lower() == ".rpm" else _unpack_deb)(
+            archive, target, progress)
+        scan_base = _root_dir(target)
+        if progress:
+            progress(1.0)
+        info = scan_directory(scan_base)
+        wanted = wanted_tokens(stem, info.root)
+        exe_candidate = pick_exe(info, wanted, prefer_bin=True)
+        icon_candidate = pick_icon(info, wanted)
+        app_name = name or pretty_name(stem, Path(exe_candidate.path).name)
+        slug = slugify(app_name)
+        exe = scan_base / exe_candidate.path
+        exe.chmod(exe.stat().st_mode | 0o755)
+        icon: Path | None = None
+        if icon_candidate is not None:
+            icon = scan_base / icon_candidate.path
+            if not icon.is_file():
+                icon = _locate(scan_base, Path(icon_candidate.path).name)
+        return App(archive=archive, install_dir=target, exe=exe, name=app_name,
+                   slug=slug, icon=icon, categories=guess_categories(stem, app_name, info.root),
+                   size=dir_size(scan_base), seconds=time.time() - started)
 
     message(f"[1/3] {archive.name} taranıyor...")
     info = scan(archive)

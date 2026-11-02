@@ -14,8 +14,7 @@ from tkinter import filedialog, ttk
 
 from . import core, desktop
 
-ACCEPTED = [("Sıkıştırılmış uygulamalar", "*.tar.gz *.tgz *.tar.xz *.txz *.tar.bz2 "
-                                           "*.tar.zst *.tar *.AppImage *.run")]
+ACCEPTED = core.SUPPORTED_SUFFIXES
 
 
 class Window:
