@@ -9,15 +9,29 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QDialog, QHBoxLayout, QLabel, QLineEdit,
-    QProgressBar, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
+    QLineEdit, QProgressBar, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from . import core, desktop
 
 WINDOW_TITLE = "Targz Converter — arşivi sürükle, uygulama olsun"
 
+
+def _app_icon_path() -> Path | None:
+    """Kendi ikonumuzu bul: önce repo/assets, sonra kurulu ikon dizinleri."""
+    candidates: list[Path] = []
+    candidates.append(Path(__file__).resolve().parents[2] / "assets" / "targz-converter.png")
+    data = Path.home() / ".local" / "share" / "targz-converter"
+    candidates.append(data / "assets" / "targz-converter.png")
+    for size in ("256x256", "512x512", "scalable"):
+        candidates.append(Path.home() / ".local" / "share" / "icons" / "hicolor" / size / "apps" / "com.github.colgecen.TargzConverter.png")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 def _is_supported(path: Path) -> bool:
     return core.is_supported(path)
@@ -107,6 +121,9 @@ class Window(QWidget):
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(640, 300)
         self.setAcceptDrops(True)
+        icon_path = _app_icon_path()
+        if icon_path is not None:
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         layout = QVBoxLayout(self)
         self.drop = QLabel("Buraya bir .tar.gz dosyası bırak\n"

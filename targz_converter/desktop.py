@@ -147,9 +147,8 @@ def _gio_metadata(path: Path, key: str, value: str) -> None:
     except Exception:
         return
     try:
-        Gio.File.new_for_path(str(path)).set_attribute(
-            f"metadata::{key}", Gio.FileAttributeType.STRING, value,
-            Gio.FileQueryInfoFlags.NONE, None)
+        Gio.File.new_for_path(str(path)).set_attribute_string(
+            f"metadata::{key}", value, Gio.FileQueryInfoFlags.NONE, None)
     except Exception:
         pass
 
@@ -195,11 +194,12 @@ def _to_png(source: Path, target: Path) -> bool:
 def refresh_caches() -> None:
     """Uygulama listesini ve simge önbelleğini tazele (hata olursa yoksayar)."""
     commands = (["update-desktop-database", str(APP_DIR / "applications")],
-                ["gtk-update-icon-cache", "-qtf", str(ICON_DIR)])
+                ["gtk-update-icon-cache", "-qtf", str(ICON_DIR)],
+                ["kbuildsycoca6"], ["kbuildsycoca5"])
     for cmd in commands:
         if shutil.which(cmd[0]):
             try:
-                subprocess.run(cmd, capture_output=True, timeout=30)
+                subprocess.run(cmd, capture_output=True, timeout=60)
             except (OSError, subprocess.TimeoutExpired):
                 pass
 

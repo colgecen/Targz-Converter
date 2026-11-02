@@ -88,11 +88,19 @@ def _app_icon() -> str:
     source_png = source_root() / "assets" / "targz-converter.png"
     if not source_svg.is_file() and not source_png.is_file():
         return "application-x-compressed-tar"
-    folder = ICON_DIR / "scalable" / "apps"
-    folder.mkdir(parents=True, exist_ok=True)
+    # SVG scalable'a, PNG boyut dizinine gider (hicolor scalable yalnız SVG bekler).
     if source_svg.is_file():
+        folder = ICON_DIR / "scalable" / "apps"
+        folder.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_svg, folder / f"{APP_ID}.svg")
     if source_png.is_file():
+        for size in ("256x256", "512x512"):
+            folder = ICON_DIR / size / "apps"
+            folder.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_png, folder / f"{APP_ID}.png")
+        # bazı temalar scalable altındaki PNG'yi de okur; ikisi de olsun
+        folder = ICON_DIR / "scalable" / "apps"
+        folder.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_png, folder / f"{APP_ID}.png")
     return APP_ID
 
@@ -223,6 +231,8 @@ def uninstall() -> list[str]:
         APP_DIR / "nautilus" / "scripts" / "Targz Converter ile uygulamaya cevir",
         ICON_DIR / "scalable" / "apps" / f"{APP_ID}.svg",
         ICON_DIR / "scalable" / "apps" / f"{APP_ID}.png",
+        ICON_DIR / "256x256" / "apps" / f"{APP_ID}.png",
+        ICON_DIR / "512x512" / "apps" / f"{APP_ID}.png",
     ] + [desk / "Targz Converter.desktop" for desk in desks]
     for target in targets:
         try:
