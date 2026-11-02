@@ -17,10 +17,12 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from .core import log
-from .desktop import APP_DIR, AUTOSTART_DIR, ICON_DIR, Shortcut, refresh_caches, write_desktop
+from .desktop import (APP_DIR, AUTOSTART_DIR, ICON_DIR, Shortcut, desktop_dir,
+                      refresh_caches, write_desktop)
 
 APP_ID = "com.github.colgecen.TargzConverter"
 DATA_DIR = APP_DIR / "targz-converter"
@@ -28,7 +30,6 @@ BIN_DIR = Path.home() / ".local" / "bin"
 PACKAGE = "targz_converter"
 LAUNCHER = "targz-converter"
 SHELL_LAUNCHER = "targz-converter-hazir-ac"
-DESKTOP_FALLBACK = Path.home() / "Masaüstü"
 SERVICE_MIME = ("application/gzip;application/x-compressed-tar;application/x-tar;"
                 "application/x-xz-compressed-tar;application/x-bzip2-compressed-tar;"
                 "application/x-zstd-compressed-tar;application/x-appimage;")
@@ -98,7 +99,7 @@ def converter_shortcut(launcher: Path) -> Shortcut:
         comment="Sıkıştırılmış arşivleri tek sürüklemede uygulamaya çevirir",
         generic="Arşivden uygulama kurucu",
         icon=_app_icon(),
-        categories="Utility;Core;PackageManagement;",
+        categories="Utility;Archiving;FileTools;",
         keywords="tar.gz;tgz;arşiv;appimage;kısayol;desktop;kur;çevir",
     )
 
@@ -124,6 +125,7 @@ def service_menu(launcher: Path) -> Path:
     target.write_text(
         "[Desktop Entry]\n"
         "Type=Service\n"
+        "Name=Targz Converter\n"
         "MimeType=" + SERVICE_MIME + "\n"
         "ServiceTypes=KonqPopupMenu/Plugin\n"
         "Actions=openTargz;convertAndLaunch;\n"
@@ -168,7 +170,9 @@ def converter_shortcuts(desktop: bool = False, autostart: bool = False) -> dict[
     entry = converter_shortcut(_write_launcher())
     written = {"menü": write_desktop(entry, APP_DIR / "applications", trust=False)}
     if desktop:
-        written["masaüstü"] = write_desktop(entry, DESKTOP_FALLBACK)
+        # Masaüstünde dosya adı göründüğü için orada kimlik yerine ad kullanılır.
+        written["masaüstü"] = write_desktop(replace(entry, id="Targz Converter"),
+                                            desktop_dir())
     if autostart:
         written["otomatik"] = write_desktop(entry, AUTOSTART_DIR, trust=False)
     return written
@@ -202,6 +206,8 @@ def install(desktop: bool = False, autostart: bool = False) -> list[Path]:
 def uninstall() -> list[str]:
     """Kurulumun geride bıraktıklarını temizler."""
     removed: list[str] = []
+    # Masaüstü klasörünün adı dile göre değiştiği üçünün üç olasılığa da bakılır.
+    desks = {desktop_dir(), Path.home() / "Masaüstü", Path.home() / "Desktop"}
     targets = [
         DATA_DIR,
         BIN_DIR / LAUNCHER,
@@ -210,8 +216,7 @@ def uninstall() -> list[str]:
         APP_DIR / "kio" / "servicemenus" / f"{APP_ID}.desktop",
         APP_DIR / "nautilus" / "scripts" / "Targz Converter ile uygulamaya cevir",
         ICON_DIR / "scalable" / "apps" / f"{APP_ID}.svg",
-        DESKTOP_FALLBACK / "Targz Converter.desktop",
-    ]
+    ] + [desk / "Targz Converter.desktop" for desk in desks]
     for target in targets:
         try:
             if target.is_dir():
