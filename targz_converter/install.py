@@ -117,7 +117,7 @@ def service_menu(launcher: Path) -> Path:
     quick.write_text(
         "#!/bin/sh\n"
         "# Seçili arşivi sessizce dönüştürür ve uygulamayı açar\n"
-        f'exec "{launcher}" --donustur --ac "%f"\n',
+        f'exec "{launcher}" --donustur --ac "$@"\n',
         encoding="utf-8",
     )
     quick.chmod(0o755)
@@ -138,7 +138,7 @@ def service_menu(launcher: Path) -> Path:
         "Name=Convert to application...\n"
         "Name[tr]=Targz Converter ile uygulamaya çevir...\n"
         "Icon=application-x-compressed-tar\n"
-        f'Exec={launcher} "%f"\n'
+        f'Exec={launcher} %f\n'
         "\n"
         "[Desktop Action convertAndLaunch]\n"
         "Name=Convert and launch\n"
