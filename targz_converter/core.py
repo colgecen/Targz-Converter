@@ -159,6 +159,24 @@ def free_bytes(path: Path) -> int:
         return 10**15
 
 
+def download_dir() -> Path:
+    """Kullanıcının indirilenler klasörü; ad dile göre değiştiği için tahmin edilmez."""
+    if shutil.which("xdg-user-dir"):
+        try:
+            done = subprocess.run(["xdg-user-dir", "DOWNLOAD"], capture_output=True,
+                                  text=True, timeout=5)
+            found = done.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            found = ""
+        if found and Path(found).is_dir():
+            return Path(found)
+    for name in ("İndirilenler", "Downloads", "Indirilenler", "İndirilenlerim"):
+        candidate = Path.home() / name
+        if candidate.is_dir():
+            return candidate
+    return Path.home()
+
+
 def is_single_file_app(path: Path) -> bool:
     return path.suffix.lower() in SINGLE_FILE_SUFFIXES
 

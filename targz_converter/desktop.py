@@ -19,10 +19,39 @@ from pathlib import Path
 from .core import App, human_size
 
 APP_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-DESKTOP_DIR = Path(subprocess.run(["xdg-user-dir", "DESKTOP"], capture_output=True,
-                                  text=True).stdout.strip() or Path.home() / "Masaüstü")
 AUTOSTART_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "autostart"
 ICON_DIR = APP_DIR / "icons" / "hicolor"
+
+
+def xdg_dir(kind: str) -> str:
+    """Sistem ayarından klasör adı öğrenir (`DESKTOP`, `DOWNLOAD`...)."""
+    if not shutil.which("xdg-user-dir"):
+        return ""
+    try:
+        done = subprocess.run(["xdg-user-dir", kind], capture_output=True, text=True,
+                              timeout=5)
+        return done.stdout.strip() if done.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def desktop_dir() -> Path:
+    """Masaüstü klasörü. Kurulum dili İngilizceyse ~/Desktop, Türkçeyse ~/Masaüstü.
+
+    Ad hiçbir yerde sabit yazılmıyor: önce sistemden sorulur, olmazsa ev dizininde
+    dolaşan bilinen adlardan hangisi varsa o kullanılır.
+    """
+    found = xdg_dir("DESKTOP")
+    if found:
+        return Path(found)
+    for name in ("Masaüstü", "Desktop", "Masaustu", "Área de trabalho", "Área de trabajo"):
+        candidate = Path.home() / name
+        if candidate.is_dir():
+            return candidate
+    return Path.home() / "Desktop"
+
+
+DESKTOP_DIR = desktop_dir()
 
 
 @dataclass

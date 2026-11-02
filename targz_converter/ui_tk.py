@@ -59,9 +59,8 @@ class Window:
     # ---------------- iş akışı ---------------- #
 
     def choose(self) -> None:
-        start = Path.home() / "İndirilenler"
         filename = filedialog.askopenfilename(
-            title="Arşivi seç", initialdir=str(start if start.is_dir() else Path.home()),
+            title="Arşivi seç", initialdir=str(core.download_dir()),
             filetypes=ACCEPTED)
         if filename:
             self.convert(Path(filename))

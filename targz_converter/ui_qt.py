@@ -168,11 +168,8 @@ class Window(QWidget):
                                     f"(.tar.gz, .tgz, .tar.xz, .AppImage olur)")
 
     def _choose(self) -> None:
-        start = str(Path.home() / "İndirilenler")
-        if not Path(start).is_dir():
-            start = str(Path.home())
         filename, _ = QFileDialog.getOpenFileName(
-            self, "Arşivi seç", start,
+            self, "Arşivi seç", str(core.download_dir()),
             "Sıkıştırılmış uygulamalar (*.tar.gz *.tgz *.tar.xz *.txz *.tar.bz2 *.tar.zst *.tar *.AppImage *.run)")
         if filename:
             self.convert(Path(filename))
