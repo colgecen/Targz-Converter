@@ -165,9 +165,11 @@ class Window(QWidget):
                                     f"(.tar.gz, .tgz, .tar.xz, .AppImage olur)")
 
     def _choose(self) -> None:
+        patterns = " ".join(f"*.{suffix.lstrip('.')}" for suffix in sorted(set(core.SUPPORTED_SUFFIXES)))
         filename, _ = QFileDialog.getOpenFileName(
             self, "Arşivi seç", str(core.download_dir()),
-            "Sıkıştırılmış uygulamalar (*.tar.gz *.tgz *.tar.xz *.txz *.tar.bz2 *.tar.zst *.tar *.AppImage *.run)")
+            f"Sıkıştırılmış uygulamalar ({patterns})",
+        )
         if filename:
             self.convert(Path(filename))
 

@@ -53,8 +53,9 @@ KEEP_WORDS = frozenset(
 ACRONYMS = {"ai", "cad", "cam", "cli", "gis", "ide", "pdf", "rpg", "tv", "ui", "vr",
             "3d", "64", "id", "it", "os", "pc", "rps", "ux", "vpn", "xml", "apk"}
 
-ARCHIVE_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tar.lz4",
+ARCHIVE_SUFFIXES = (".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tar.lz4",
                     ".tgz", ".txz", ".tbz2", ".tzst")
+BARE_SUFFIXES = (".gz", ".xz", ".bz2", ".zst")
 SINGLE_FILE_SUFFIXES = (".appimage", ".run", ".bin", ".sh", ".x86_64")
 
 # Uygulama adı benzerliğinden kategori çıkarmak için küçük eşleme.
@@ -177,17 +178,24 @@ def download_dir() -> Path:
     return Path.home()
 
 
-SUPPORTED_SUFFIXES = (".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".tar.lz4",
-                      ".tar.zst", ".tzst", ".tar", ".appimage", ".run", ".rpm", ".deb")
+SUPPORTED_SUFFIXES = (ARCHIVE_SUFFIXES + BARE_SUFFIXES +
+                      (".zip", ".7z", ".appimage", ".run", ".bin", ".sh", ".x86_64",
+                       ".rpm", ".deb", ".src.rpm", ".flatpakref", ".flatpak"))
+
+
+def has_suffix(path: Path, suffixes: tuple[str, ...]) -> bool:
+    """Dosya adının sonunda belirtilen soneklerden biri var mı? (çok parçalı sonekler dahil)"""
+    low = path.name.lower()
+    return any(low.endswith(suffix) for suffix in suffixes)
 
 
 def is_supported(path: Path) -> bool:
     """Tahmini bir uygulama dosyası mı? (arşiv + tek dosyalık + paketler)"""
-    return path.suffix.lower() in SUPPORTED_SUFFIXES
+    return has_suffix(path, SUPPORTED_SUFFIXES)
 
 
 def is_single_file_app(path: Path) -> bool:
-    return path.suffix.lower() in SINGLE_FILE_SUFFIXES
+    return has_suffix(path, SINGLE_FILE_SUFFIXES)
 
 
 # --------------------------------------------------------------------------- #
@@ -391,7 +399,25 @@ def unpack(archive: Path, dest: Path, progress=None) -> str:
     """Arşivi açar ve içine girilecek kök klasörü döndürür."""
     dest.mkdir(parents=True, exist_ok=True)
     used = "tarfile"
-    if shutil.which("tar"):
+    if has_suffix(archive, (".zip",)):
+        unzip = shutil.which("unzip")
+        if not unzip:
+            raise RuntimeError("ZIP açmak için unzip gerekli (apt: unzip).")
+        done = subprocess.run([unzip, "-o", "-q", str(archive), "-d", str(dest)],
+                               capture_output=True, text=True, timeout=3600)
+        if done.returncode != 0:
+            raise RuntimeError(f"ZIP açılamadı: {(done.stderr or done.stdout).strip()[:300]}")
+        used = "unzip"
+    elif has_suffix(archive, (".7z",)):
+        seven = shutil.which("7z") or shutil.which("7za") or shutil.which("7zr")
+        if not seven:
+            raise RuntimeError("7z açmak için 7z/p7zip gerekli (apt: p7zip-full).")
+        done = subprocess.run([seven, "x", "-y", str(archive), f"-o{dest}"],
+                               capture_output=True, text=True, timeout=3600)
+        if done.returncode != 0:
+            raise RuntimeError(f"7z açılamadı: {(done.stderr or done.stdout).strip()[:300]}")
+        used = "7z"
+    elif shutil.which("tar"):
         cmd = ["tar", "-xf", str(archive), "-C", str(dest)]
         if shutil.which("pigz") and archive.name.lower().endswith((".tar.gz", ".tgz")):
             cmd[1:1] = ["--use-compress-program", "pigz -dc"]
@@ -514,8 +540,6 @@ def _unpack_rpm(archive: Path, dest: Path, progress=None) -> str:
                            "(apt: rpm2cpio cpio | dnf: rpm2cpio cpio).")
     done = subprocess.run(["sh", "-c", f"{rpm2cpio} {archive} | {cpio} -idm"],
                            cwd=str(dest), capture_output=True, text=True, timeout=3600)
-    if done.returncode != 0:
-        raise RuntimeError(f"RPM açılamadı: {(done.stderr or done.stdout).strip()[:300]}")
     if progress:
         progress(1.0)
     return "rpm2cpio+cpio"
@@ -549,6 +573,17 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
         raise FileNotFoundError(f"dosya bulunamadı: {archive}")
     stem = archive_stem(archive)
 
+    if has_suffix(archive, BARE_SUFFIXES) and not has_suffix(archive, ARCHIVE_SUFFIXES):
+        # Tek dosya sıkıştırılmış (.gz/.xz/.bz2/.zst): önce sök, sonra tek dosya gibi kur.
+        started = time.time()
+        bare_dir = _install_dir(base, slugify(archive_stem(archive)))
+        bare_exe = _decompress_bare(archive, bare_dir)
+        bare_exe.chmod(bare_exe.stat().st_mode | 0o755)
+        bare_name = name or pretty_name(archive_stem(archive), bare_exe.stem)
+        return App(archive=archive, install_dir=bare_dir, exe=bare_exe, name=bare_name,
+                   slug=slugify(bare_name), categories=guess_categories(archive_stem(archive), bare_name),
+                   single_file=True, size=bare_exe.stat().st_size, seconds=time.time() - started)
+
     if is_single_file_app(archive):
         # Tek dosyalık uygulama (AppImage/.run): açmaya gerek yok, şak diye biter.
         target = _install_dir(base, slugify(stem))
@@ -566,12 +601,31 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
                    single_file=True, size=exe.stat().st_size,
                    seconds=time.time() - started)
 
-    if archive.suffix.lower() in (".rpm", ".deb"):
-        # RPM/DEB: arşiv motoru yok; paket kutusundaki içerik aynı akışta açılır.
+    if has_suffix(archive, (".flatpak", ".flatpakref")):
+        # Flatpak: .flatpak tek dosya (commit) tutar, .flatpakref ise remote referansıdır.
+        started = time.time()
+        if has_suffix(archive, (".flatpakref",)):
+            raise RuntimeError(f"'{archive.name}' bir Flatpak uygulama paketi/değil (flatpakref, remote referansı).")
+        flat_dir = _install_dir(base, slugify(archive_stem(archive)))
+        flat_exe = flat_dir / archive.name
+        flat_exe.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(archive, flat_exe)
+        flat_exe.chmod(flat_exe.stat().st_mode | 0o755)
+        flat_name = name or pretty_name(archive_stem(archive), archive.stem)
+        return App(archive=archive, install_dir=flat_dir, exe=flat_exe, name=flat_name,
+                   slug=slugify(flat_name), categories=guess_categories(archive_stem(archive), flat_name),
+                   single_file=True, size=flat_exe.stat().st_size, seconds=time.time() - started)
+
+    if has_suffix(archive, (".rpm", ".deb", ".src.rpm", ".zip", ".7z")):
+        # RPM/DEB/ZIP/7Z: arşiv motoru yok; paket kutusundaki içerik aynı akışta açılır.
         started = time.time()
         target = _install_dir(base, slugify(stem))
-        engine = (_unpack_rpm if archive.suffix.lower() == ".rpm" else _unpack_deb)(
-            archive, target, progress)
+        if has_suffix(archive, (".rpm", ".src.rpm")):
+            engine = _unpack_rpm(archive, target, progress)
+        elif has_suffix(archive, (".deb",)):
+            engine = _unpack_deb(archive, target, progress)
+        else:
+            engine = unpack(archive, target, progress)
         scan_base = _root_dir(target)
         if progress:
             progress(1.0)
@@ -661,3 +715,22 @@ def _locate(root: Path, filename: str) -> Path | None:
             if not any(part.lower() in SKIP_DIRS for part in found.parts):
                 return found
     return None
+
+
+def _decompress_bare(archive: Path, dest: Path) -> Path:
+    """Tek dosya sıkıştırılmış (.gz/.xz/.bz2/.zst) dosyayı çözer ve hedefe yazar."""
+    dest.mkdir(parents=True, exist_ok=True)
+    suffix = archive.suffix.lower()
+    program_map = {".gz": ("gzip", "-dc"), ".xz": ("xz", "-dc"), ".bz2": ("bunzip2", "-c"),
+                   ".zst": ("unzstd", "-c")}
+    program, flag = program_map[suffix]
+    program_path = shutil.which(program)
+    if not program_path:
+        raise RuntimeError(f"'{suffix}' açmak için {program} gerekli.")
+    target = dest / archive.name
+    with open(target, "wb") as handle:
+        done = subprocess.run([program_path, flag, str(archive)], check=False,
+                               stdout=handle, stderr=subprocess.PIPE, timeout=1800)
+    if done.returncode != 0:
+        raise RuntimeError(f"'{archive.name}' açılamadı: {(done.stderr or b'').decode(errors='replace').strip()[:300]}")
+    return target

@@ -14,7 +14,10 @@ from tkinter import filedialog, ttk
 
 from . import core, desktop
 
-ACCEPTED = core.SUPPORTED_SUFFIXES
+ACCEPTED: list[tuple[str, str]] = [
+    ("Sıkıştırılmış uygulamalar", f"*.{suffix.lstrip('.')}")
+    for suffix in sorted(set(core.SUPPORTED_SUFFIXES))
+]
 
 
 class Window:
