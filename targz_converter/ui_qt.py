@@ -6,9 +6,11 @@ Sistemde PySide6 varsa bu arayüz kullanılır; yoksa ui_tk.py devreye girer.
 
 from __future__ import annotations
 
+import time
+
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
@@ -67,6 +69,7 @@ class ResultDialog(QDialog):
         super().__init__(parent)
         self.app = app
         self.written: dict[str, Path] = {}
+        self._shown_at: float = 0.0
         self.setWindowTitle(f"{app.name} hazır")
         self.setModal(True)
         self.setMinimumWidth(460)
@@ -101,8 +104,24 @@ class ResultDialog(QDialog):
         self.run_now.clicked.connect(lambda: self._finish(launch=True))
         self.close_button.clicked.connect(lambda: self._finish(launch=False))
 
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        self._shown_at = time.monotonic()
+        # Pencere açılır açılmaz farenin eski tıklaması yanlışlıkla
+        # düğmeye basmasın diye düğmeleri kısa bir süre devre dışı bırak.
+        self.run_now.setEnabled(False)
+        self.close_button.setEnabled(False)
+        QTimer.singleShot(300, self._enable_buttons)
+
+    def _enable_buttons(self) -> None:
+        self.run_now.setEnabled(True)
+        self.close_button.setEnabled(True)
+
     def _finish(self, launch: bool = False) -> None:
         """Seçilen kısayolları yazar, istenirse uygulamayı başlatır."""
+        # Pencere açılır açılmaz oluşan sahte tıklamayı yoksay.
+        if time.monotonic() - getattr(self, "_shown_at", 0.0) < 0.4:
+            return
         self.written = desktop.install(
             self.app, desktop=self.desktop.isChecked(),
             autostart=self.autostart.isChecked())
