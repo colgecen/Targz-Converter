@@ -50,8 +50,8 @@ Geri almak için: `python3 install.py --kaldir`
 ## Kullanım
 
 **Arayüz.** `targz-converter` komutunu çalıştır ya da uygulamalar menüsünden aç;
-`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.tar` veya `.AppImage`
-dosyasını pencereye bırak. İstersen dönüşmeden önce adını değiştirebilirsin.
+`.tar.gz`, `.tgz`, `.tar.xz`, `.tar.zst`, `.tar.bz2`, `.tar`, `.AppImage`, `.rpm` veya
+`.deb` dosyasını pencereye bırak. İstersen dönüşmeden önce adını değiştirebilirsin.
 
 **Sağ tık.** Dolphin'de arşive sağ tık → **Targz Converter ile uygulamaya
 çevir…** (arayüzü açar) veya **Çevir ve uygulamayı aç** (sormadan kurar, açar).
