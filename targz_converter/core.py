@@ -1,0 +1,509 @@
+"""Arşiv tarama, açma, çalıştırılabilir ve ikon bulma işlemleri.
+
+Hız buradaki iki karardan gelir:
+  1. Tarama akışlıdır (``r|*``): arşiv bir kez okunur, baştan sona tekrar
+     açılmaz. Yalnızca çalıştırılabilir adaylarının ilk 4 baytı okunur.
+  2. Açma işi mümkünse sistem ``tar`` komutuna devredilir; ``pigz`` varsa
+     paralel açılır. Python'un ``tarfile`` motoru yalnızca yedek olarak kalır.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import tarfile
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# Çalıştırılabilir aramak için ilgilenmediğimiz yardımcı dizinler. Bir Linux
+# uygulamasının kütüphane/plugın çöplüğü burada biter; buradan aşağısına inmeyiz.
+SKIP_DIRS = frozenset(
+    {
+        "lib", "lib32", "lib64", "libs", "libexec", "share", "doc", "docs", "man",
+        "locales", "localization", "lang", "resources", "resource", "plugins",
+        "plugin", "extensions", "platforms", "sqldrivers", "imageformats",
+        "styles", "printsupport", "networkinformation", "tls", "xcbglintegrations",
+        "iconengines", "bearer", "virtualkeyboard", "qml", "rtlib", "node_modules",
+        "site-packages", "venv", "env", "test", "tests", "samples", "examples",
+        "extra", "data", "res", "usr", "etc", "var", "tmp", "cache", "logfiles",
+        "crashpad", "scripts", "tools", "bin64", "bin32", "browser", "contents",
+        "game", "meta", "drivers", "firmware", "fonts",
+    }
+)
+
+# Dosya adının sonunda duran çöp sözcükler (uygulama adı üretilirken atılır).
+NOISE_WORDS = frozenset(
+    {
+        "linux", "linux64", "linux_x64", "linux-x64", "x64", "x86_64", "x86-64",
+        "amd64", "i386", "i686", "arm64", "aarch64", "portable", "setup", "install",
+        "installer", "bin", "bundle", "release", "final", "stable", "nightly",
+        "beta", "alpha", "turkish", "tux", "pc", "appimage", "tar", "gz", "tgz",
+        "zip", "xz", "bz2", "zst", "run",
+    }
+)
+
+KEEP_WORDS = frozenset(
+    {"code", "studio", "ide", "editor", "player", "browser", "viewer", "server",
+     "hub", "lab", "pro", "max", "os", "3d", "cad", "gis", "ai", "vs"}
+)
+
+ACRONYMS = {"ai", "cad", "cam", "cli", "gis", "ide", "pdf", "rpg", "tv", "ui", "vr",
+            "3d", "64", "id", "it", "os", "pc", "rps", "ux", "vpn", "xml", "apk"}
+
+ARCHIVE_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tar.lz4",
+                    ".tgz", ".txz", ".tbz2", ".tzst")
+SINGLE_FILE_SUFFIXES = (".appimage", ".run", ".bin", ".sh", ".x86_64")
+
+# Uygulama adı benzerliğinden kategori çıkarmak için küçük eşleme.
+CATEGORY_HINTS = (
+    (r"remote|teamviewer|rustdesk|anydesk|vnc|ssh", "RemoteAccess;Network;"),
+    (r"steam|game|lutris|heroic|epic|minecraft", "Game;"),
+    (r"editor|code|studio|ide|idea|pycharm|webstorm|goland|clion|devel", "Development;"),
+    (r"cad|freecad|blender|mesh|slice|cura|prusaslicer|3d|print", "3DGraphics;Graphics;"),
+    (r"gimp|krita|photo|image|paint|inkscape|inkscape|darktable", "Graphics;"),
+    (r"vlc|mpv|music|spotify|radio|podcast|audio", "AudioVideo;Audio;"),
+    (r"firefox|chrom|browser|brave|opera", "Network;WebBrowser;"),
+    (r"libre|office|writer|calc|impress|pdf", "Office;"),
+    (r"terminal|konsole|alacritty|kitty|shell", "System;TerminalEmulator;"),
+)
+
+_ELF = b"\x7fELF"
+_PNG = b"\x89PNG"
+_ICO_MAGIC = b"\x00\x00\x01\x00"
+_VER = re.compile(r"^\d[\d.+-]*$")
+_VER_TAIL = re.compile(r"[-_.]v?\d[\w.+-]*$")
+
+
+# --------------------------------------------------------------------------- #
+# Yardımcılar
+# --------------------------------------------------------------------------- #
+
+def log(message: str) -> None:
+    print(message, flush=True)
+
+
+def slugify(text: str) -> str:
+    """Dosya/desktop adı için güvenli, kısa bir ad üretir."""
+    text = re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()
+    return re.sub(r"-{2,}", "-", text)[:64] or "uygulama"
+
+
+def archive_stem(path: Path) -> str:
+    """teamviewer_qs.tar.gz -> teamviewer_qs,/foo/MyApp-1.2.3 -> MyApp."""
+    name = path.name
+    low = name.lower()
+    for suffix in ARCHIVE_SUFFIXES:
+        if low.endswith(suffix):
+            return name[: -len(suffix)]
+    return os.path.splitext(name)[0]
+
+
+def _clean_tokens(stem: str) -> list[str]:
+    tokens = re.split(r"[-_.\s]+", stem)
+    cleaned: list[str] = []
+    for token in tokens:
+        if not token or _VER.match(token) or _VER.match(token.lstrip("v")):
+            continue
+        token = _VER_TAIL.sub("", token)
+        if not token or token.lower() in NOISE_WORDS:
+            continue
+        cleaned.append(token)
+    return cleaned
+
+
+def pretty_name(stem: str, exe_name: str = "") -> str:
+    """Arşiv/ad veya ikili adından okunabilir uygulama adı üretir."""
+    for source in (exe_name, stem):
+        if not source:
+            continue
+        tokens = _clean_tokens(source)
+        if tokens:
+            words = [t.upper() if t.lower() in ACRONYMS
+                     else (t if t.isupper() and len(t) <= 4 else t.capitalize())
+                     for t in tokens[:4]
+                     if len(t) > 1 or t.lower() in KEEP_WORDS]
+            if words:
+                return " ".join(words)
+    return stem[:1].upper() + stem[1:]
+
+
+def human_size(num: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if num < 1024 or unit == "TB":
+            return f"{num:.0f} {unit}" if unit == "B" else f"{num:.1f} {unit}"
+        num /= 1024
+    return f"{num:.1f} TB"
+
+
+def dir_size(path: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path, followlinks=False):
+        for entry in files:
+            try:
+                total += os.lstat(os.path.join(root, entry)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def free_bytes(path: Path) -> int:
+    probe = path
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        return shutil.disk_usage(probe).free
+    except OSError:
+        return 10**15
+
+
+def is_single_file_app(path: Path) -> bool:
+    return path.suffix.lower() in SINGLE_FILE_SUFFIXES
+
+
+# --------------------------------------------------------------------------- #
+# Sonuç yapıları
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class Candidate:
+    path: str
+    size: int
+    score: int
+
+
+@dataclass
+class Scan:
+    """Tek geçişli taramanın çıktısı."""
+
+    root: str = ""
+    size_total: int = 0
+    file_count: int = 0
+    names: set[str] = field(default_factory=set)
+    exes: list[Candidate] = field(default_factory=list)
+    icons: list[Candidate] = field(default_factory=list)
+    preferred_root: str = ""
+
+
+@dataclass
+class App:
+    """Kurulmaya hazır uygulama."""
+
+    archive: Path
+    install_dir: Path
+    exe: Path
+    name: str
+    slug: str
+    icon: Path | None = None
+    categories: str = "Utility;"
+    single_file: bool = False
+    size: int = 0
+    seconds: float = 0.0
+
+    @property
+    def wm_class(self) -> str:
+        return self.exe.name
+
+
+# --------------------------------------------------------------------------- #
+# 1. Tarama
+# --------------------------------------------------------------------------- #
+
+def scan(archive: Path) -> Scan:
+    """Arşivi tek seferde okur; çalıştırılabilir ve ikon adaylarını toplar."""
+    result = Scan()
+    roots: dict[str, int] = {}
+    with tarfile.open(archive, "r|*") as tar:
+        for member in tar:
+            name = member.name
+            result.names.add(Path(name).name.lower())
+            if member.isdir():
+                top = name.split("/", 1)[0].strip("/")
+                if top and top != ".":
+                    roots[top] = roots.get(top, 0) + 1
+                continue
+            if not member.isfile():
+                continue
+
+            result.file_count += 1
+            result.size_total += member.size
+
+            parts = [p for p in name.split("/") if p not in ("", ".")]
+            if any(p.lower() in SKIP_DIRS for p in parts[:-1]):
+                continue
+            depth = len(parts) - 1
+            if depth > 3:
+                continue
+
+            score = 0
+            if member.mode & 0o111:
+                score = 120 - depth * 10
+            elif depth <= 1 and Path(name).suffix.lower() in (".appimage", ".run"):
+                score = 70  # izin biti kaybolmuş olabilir, sonra düzeltilir
+            if score:
+                blob = _head(tar, member, 4)
+                if blob.startswith(_ELF):
+                    score += 60
+                elif blob.startswith(b"#!"):
+                    score += 25
+                elif not blob.startswith(_PNG):
+                    score -= 90
+                if score > 0:
+                    result.exes.append(Candidate(name, member.size, score))
+
+            icon_score = _icon_score(parts, member.size)
+            if icon_score:
+                result.icons.append(Candidate(name, member.size, icon_score))
+
+    if len(roots) == 1:
+        result.root = next(iter(roots))
+    elif roots:
+        result.root = max(roots, key=lambda key: (roots[key], len(key)))
+    return result
+
+
+def _head(tar: tarfile.TarFile, member: tarfile.TarInfo, count: int) -> bytes:
+    try:
+        handle = tar.extractfile(member)
+        if handle is None:
+            return b""
+        with handle:
+            return handle.read(count) or b""
+    except Exception:
+        return b""
+
+
+def _icon_score(parts: list[str], size: int) -> int:
+    if not 32 < size < 4_000_000:
+        return 0
+    name = parts[-1]
+    stem, ext = os.path.splitext(name)
+    ext = ext.lower()
+    if ext not in (".png", ".svg", ".ico", ".xpm"):
+        return 0
+    low = stem.lower()
+    score = 40
+    if ext in (".svg", ".png"):
+        score = 60
+    if ext == ".ico":
+        score = 50
+    if any(token in low for token in ("logo", "icon", "app", "icon_256", "master")):
+        score += 15
+    if any(part.lower() in ("hicolor", "icons", "icon") for part in parts[:-1]):
+        score += 10
+    if len(parts) <= 2:
+        score += 8
+    if low in ("favicon", "splash", "loading", "spinner", "arrow", "check"):
+        score -= 60
+    return score
+
+
+# --------------------------------------------------------------------------- #
+# 2. Seçim (en iyi adayları bulma)
+# --------------------------------------------------------------------------- #
+
+def wanted_tokens(stem: str, root: str = "") -> set[str]:
+    """Arşiv ve üst klasör adından çıkan sözcükler: doğru ikiliyi seçerken
+    bu sözcükler puanı yükseltir."""
+    wanted = {token.lower() for token in _clean_tokens(stem)}
+    wanted |= {token.lower() for token in _clean_tokens(root)}
+    return wanted - {""}
+
+
+def pick_exe(scan_result: Scan, wanted: set[str]) -> Candidate | None:
+    if not scan_result.exes:
+        return None
+    best = max(scan_result.exes,
+               key=lambda c: (c.score + _name_bonus(Path(c.path).name, wanted), c.size))
+    return best
+
+
+def _name_bonus(filename: str, wanted: set[str]) -> int:
+    stem = os.path.splitext(filename)[0].lower()
+    bonus = 0
+    if stem in wanted:
+        bonus += 80
+    elif any(word in stem for word in wanted):
+        bonus += 30
+    if stem.endswith(("gui", "-gui", "qt5", "qt6")):
+        bonus -= 15
+    if stem.startswith(("tv_", "setup", "unins", "crashpad")) or "crashpad" in stem:
+        bonus -= 100
+    return bonus
+
+
+def pick_icon(scan_result: Scan, wanted: set[str]) -> Candidate | None:
+    if not scan_result.icons:
+        return None
+    return max(scan_result.icons,
+               key=lambda c: (c.score + _name_bonus(Path(c.path).name, wanted), c.size))
+
+
+def guess_categories(*texts: str) -> str:
+    blob = " ".join(text.lower() for text in texts if text)
+    for pattern, categories in CATEGORY_HINTS:
+        if re.search(pattern, blob):
+            return categories
+    return "Utility;"
+
+
+# --------------------------------------------------------------------------- #
+# 3. Açma
+# --------------------------------------------------------------------------- #
+
+def unpack(archive: Path, dest: Path, progress=None) -> str:
+    """Arşivi açar ve içine girilecek kök klasörü döndürür."""
+    dest.mkdir(parents=True, exist_ok=True)
+    used = "tarfile"
+    if shutil.which("tar"):
+        cmd = ["tar", "-xf", str(archive), "-C", str(dest)]
+        if shutil.which("pigz") and archive.name.lower().endswith((".tar.gz", ".tgz")):
+            cmd[1:1] = ["--use-compress-program", "pigz -dc"]
+        try:
+            done = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            if done.returncode == 0:
+                used = "pigz+tar" if "pigz" in " ".join(cmd) else "tar"
+            else:
+                log(f"tar başarısız, Python motoruna dönülüyor: {done.stderr.strip()[:200]}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log(f"tar çalıştırılamadı ({exc}), Python motoruna dönülüyor")
+    if used == "tarfile":
+        with tarfile.open(archive, "r:*") as tar:
+            members = list(tar)
+            step = max(1, len(members) // 100)
+            for index, member in enumerate(members, 1):
+                if progress and index % step == 0:
+                    progress(min(1.0, index / len(members)))
+            tar.extractall(dest, filter="data")
+
+    root = _root_dir(dest)
+    _relax_exec(root)
+    if progress:
+        progress(1.0)
+    return used
+
+
+def _root_dir(dest: Path) -> Path:
+    """Tek bir üst klasör varsa ona girer (çoğu arşiv böyle paketlenir)."""
+    try:
+        entries = [p for p in dest.iterdir() if not p.name.startswith(".")]
+    except OSError:
+        return dest
+    if len(entries) == 1 and entries[0].is_dir():
+        return entries[0]
+    return dest
+
+
+def _relax_exec(root: Path) -> None:
+    """İzin biti kaybolmuş ikilileri ve AppImage'ları yeniden çalıştırılabilir yapar."""
+    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+        for filename in filenames:
+            if filename.lower().endswith((".appimage", ".run")):
+                target = Path(dirpath) / filename
+                try:
+                    target.chmod(target.stat().st_mode | 0o755)
+                except OSError:
+                    pass
+
+
+# --------------------------------------------------------------------------- #
+# 4. Uçtan uca dönüşüm
+# --------------------------------------------------------------------------- #
+
+def convert(archive: Path, base: Path, name: str = "", progress=None,
+            message=log) -> App:
+    """Arşivi kurulum klasörüne açar ve kurulmaya hazır App nesnesi döndürür."""
+    started = time.time()
+    archive = archive.expanduser().resolve()
+    if not archive.is_file():
+        raise FileNotFoundError(f"dosya bulunamadı: {archive}")
+    stem = archive_stem(archive)
+
+    if is_single_file_app(archive):
+        # Tek dosyalık uygulama (AppImage/.run): açmaya gerek yok, şak diye biter.
+        target = _install_dir(base, slugify(stem))
+        target.mkdir(parents=True, exist_ok=True)
+        exe = target / archive.name
+        if progress:
+            progress(0.2)
+        shutil.copy2(archive, exe)
+        exe.chmod(exe.stat().st_mode | 0o755)
+        app_name = name or pretty_name(stem, exe.stem)
+        if progress:
+            progress(1.0)
+        return App(archive=archive, install_dir=target, exe=exe, name=app_name,
+                   slug=slugify(app_name), categories=guess_categories(stem, app_name),
+                   single_file=True, size=exe.stat().st_size,
+                   seconds=time.time() - started)
+
+    message(f"[1/3] {archive.name} taranıyor...")
+    info = scan(archive)
+    if not info.exes:
+        raise LookupError("arşivde çalıştırılabilir bir uygulama bulunamadı")
+
+    free = free_bytes(base)
+    if info.size_total * 2 > free:
+        raise OSError(f"yeterli boş alan yok: gereken ~{human_size(info.size_total * 2)}")
+
+    exe_candidate = pick_exe(info, wanted_tokens(stem, info.root))
+    icon_candidate = pick_icon(info, wanted_tokens(stem, info.root))
+    guess = exe_candidate.path[len(info.root) + 1:] if info.root else exe_candidate.path
+    message(f"[1/3] çalıştırılabilir bulundu: {guess} "
+            f"({info.file_count} dosya, ~{human_size(info.size_total)})")
+
+    app_name = name or pretty_name(stem, Path(exe_candidate.path).name)
+    slug = slugify(app_name)
+    target = _install_dir(base, slug)
+    message(f"[2/3] {target} içine açılıyor...")
+
+    def _progress(value: float) -> None:
+        if progress:
+            progress(0.15 + 0.8 * value)
+
+    engine = unpack(archive, target, _progress)
+    root = target if info.root == "" else target / info.root.split("/")[0]
+    if not root.is_dir():
+        root = _root_dir(target)
+
+    exe = root / exe_candidate.path[len(info.root) + 1:] if info.root else root / exe_candidate.path
+    if not exe.is_file():
+        found = _locate(root, Path(exe_candidate.path).name)
+        if found is None:
+            raise FileNotFoundError("açma sonrası çalıştırılabilir bulunamadı")
+        exe = found
+    exe.chmod(exe.stat().st_mode | 0o755)
+
+    icon: Path | None = None
+    if icon_candidate is not None:
+        relative = icon_candidate.path[len(info.root) + 1:] if info.root else icon_candidate.path
+        icon = root / relative
+        if not icon.is_file():
+            icon = _locate(root, Path(icon_candidate.path).name)
+
+    message(f"[3/3] tamam ({engine} motoru)")
+    return App(archive=archive, install_dir=target, exe=exe, name=app_name, slug=slug,
+               icon=icon, categories=guess_categories(stem, app_name, info.root),
+               size=dir_size(target), seconds=time.time() - started)
+
+
+def _install_dir(base: Path, slug: str) -> Path:
+    """Aynı addan ikinci bir sürüm varsa -2, -3 ekler."""
+    candidate = base / slug
+    if not candidate.exists():
+        return candidate
+    for index in range(2, 100):
+        other = base / f"{slug}-{index}"
+        if not other.exists():
+            return other
+    return base / f"{slug}-{int(time.time())}"
+
+
+def _locate(root: Path, filename: str) -> Path | None:
+    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+        if filename in filenames:
+            found = Path(dirpath) / filename
+            if not any(part.lower() in SKIP_DIRS for part in found.parts):
+                return found
+    return None
