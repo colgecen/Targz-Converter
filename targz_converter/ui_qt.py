@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 
 from pathlib import Path
+import shutil
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QIcon
@@ -398,6 +399,8 @@ class MultiResultDialog(QDialog):
         nav.addWidget(self.next_btn)
         nav.addStretch(1)
         nav.addWidget(self.all_btn)
+        self.delete_btn = QPushButton("Sil")
+        nav.addWidget(self.delete_btn)
         layout.addLayout(nav)
 
         bottom = QHBoxLayout()
@@ -410,6 +413,7 @@ class MultiResultDialog(QDialog):
         self.prev_btn.clicked.connect(self._prev)
         self.next_btn.clicked.connect(self._next)
         self.all_btn.clicked.connect(self._all_shortcuts)
+        self.delete_btn.clicked.connect(self._delete_current)
         self.ok_btn.clicked.connect(self._finish)
 
         self._update_view()
@@ -469,6 +473,30 @@ class MultiResultDialog(QDialog):
         for app in self.apps:
             desktop.install(app, desktop=True, autostart=False)
         self.accept()
+
+    def _delete_current(self) -> None:
+        if time.monotonic() - self._shown_at < 0.4:
+            return
+        if not self.apps:
+            return
+        reply = QMessageBox.question(
+            self, i18n.t("ok"), "Bu uygulama listeden çıkarılsın ve kurulum dosyaları silinsin mi?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        app = self.apps.pop(self.index)
+        try:
+            if getattr(app, "install_dir", None) and Path(app.install_dir).exists():
+                shutil.rmtree(app.install_dir, ignore_errors=True)
+        except Exception:
+            pass
+        if self.index >= len(self.apps):
+            self.index = max(0, len(self.apps) - 1)
+        if not self.apps:
+            self.accept()
+            return
+        self._update_view()
 
     def _finish(self) -> None:
         if time.monotonic() - self._shown_at < 0.4:
