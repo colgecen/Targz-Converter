@@ -368,10 +368,15 @@ class MultiResultDialog(QDialog):
         if failures:
             fail_text = i18n.t("multi_failed") + "\n" + "\n".join(
                 f"  • {name}: {err}" for name, err in failures)
-            fail_label = QLabel(fail_text)
-            fail_label.setStyleSheet("color:#c0392b;")
-            fail_label.setWordWrap(True)
-            layout.addWidget(fail_label)
+            fail_box = QTextEdit()
+            fail_box.setReadOnly(True)
+            fail_box.setPlainText(fail_text)
+            fail_box.setStyleSheet("color:#c0392b; border:1px solid #e0b4b4; "
+                                   "border-radius:6px; background:#fdf2f2;")
+            # 3 satırı aşarsa kaydırma çubuğu çıksın.
+            fail_box.setFixedHeight(60)
+            fail_box.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            layout.addWidget(fail_box)
 
         self.info = QLabel()
         self.info.setWordWrap(True)
