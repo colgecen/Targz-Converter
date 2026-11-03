@@ -37,10 +37,13 @@ SKIP_DIRS = frozenset(
 # Dosya adının sonunda duran çöp sözcükler (uygulama adı üretilirken atılır).
 NOISE_WORDS = frozenset(
     {
-        "linux", "linux64", "linux_x64", "linux-x64", "x64", "x86_64", "x86-64",
+        "linux", "linux64", "linux_x64", "linux-x64", "x64", "x86", "x86_64", "x86-64",
+        "64bit", "32bit", "64-bit", "32-bit",
+        "latest",
         "amd64", "i386", "i686", "arm64", "aarch64", "portable", "setup", "install",
         "installer", "bin", "bundle", "release", "final", "stable", "nightly",
         "beta", "alpha", "turkish", "tux", "pc", "appimage", "tar", "gz", "tgz",
+        "qs",
         "zip", "xz", "bz2", "zst", "run",
     }
 )
@@ -116,18 +119,31 @@ def _clean_tokens(stem: str) -> list[str]:
 
 
 def pretty_name(stem: str, exe_name: str = "") -> str:
-    """Arşiv/ad veya ikili adından okunabilir uygulama adı üretir."""
+    """Arşiv/ad veya ikili adından okunabilir uygulama adı üretir.
+
+    İkili adı genelde ürün adının kısaltılmış hâlidir (ör. 'kiro' → 'Kiro IDE'
+    yerine 'Kiro'); bu yüzden her iki kaynaktan gelen token'lar birleştirilir
+    ve tekilleştirilir, böylece 'yarım yamalak' ad yerine tam ad çıksın.
+    """
+    merged: list[str] = []
+    seen: set[str] = set()
+    # Önce ikili adı (daha güvenilir), sonra arşiv adı.
     for source in (exe_name, stem):
         if not source:
             continue
-        tokens = _clean_tokens(source)
-        if tokens:
-            words = [t.upper() if t.lower() in ACRONYMS
-                     else (t if t.isupper() and len(t) <= 4 else t.capitalize())
-                     for t in tokens[:4]
-                     if len(t) > 1 or t.lower() in KEEP_WORDS]
-            if words:
-                return " ".join(words)
+        for token in _clean_tokens(source):
+            key = token.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(token)
+    if merged:
+        words = [t.upper() if t.lower() in ACRONYMS
+                 else (t if t.isupper() and len(t) <= 4 else t.capitalize())
+                 for t in merged[:4]
+                 if len(t) > 1 or t.lower() in KEEP_WORDS]
+        if words:
+            return " ".join(words)
     return stem[:1].upper() + stem[1:]
 
 
