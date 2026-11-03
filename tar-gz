@@ -52,7 +52,7 @@ usage() {
 }
 
 list_targets() {
-  echo "linux   : targz (.tar.gz) | zip (.zip)"
+  echo "linux   : appimage (.AppImage) | targz (.tar.gz) | zip (.zip)"
 }
 
 do_install() {
@@ -67,6 +67,45 @@ do_install() {
       echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
       ;;
   esac
+}
+
+package_appimage() {
+  mkdir -p "$ROOT/build"
+  local appdir="$ROOT/build/TargzConverter.AppDir"
+  rm -rf "$appdir"
+  mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps"
+
+  # kaynak kodu göm
+  cp -r "$ROOT/targz_converter" "$appdir/usr/bin/"
+  cp "$ROOT/targz2app.py" "$ROOT/install.py" "$appdir/usr/bin/"
+  cp "$ROOT/assets/targz-converter.png" "$appdir/usr/share/icons/hicolor/256x256/apps/targz-converter.png"
+  cp "$ROOT/assets/targz-converter.png" "$appdir/targz-converter.png"
+
+  cat > "$appdir/targz-converter.desktop" << 'DESKTOP'
+[Desktop Entry]
+Name=Targz Converter
+Exec=targz-converter
+Icon=targz-converter
+Type=Application
+Categories=Utility;Archiving;FileTools;
+Terminal=false
+DESKTOP
+  cp "$appdir/targz-converter.desktop" "$appdir/usr/share/applications/"
+
+  cat > "$appdir/AppRun" << 'APPRUN'
+#!/bin/bash
+HERE="$(dirname "$(readlink -f "$0")")"
+export PYTHONPATH="$HERE/usr/bin:$PYTHONPATH"
+exec python3 "$HERE/usr/bin/targz2app.py" "$@"
+APPRUN
+  chmod +x "$appdir/AppRun"
+
+  local out="$ROOT/build/Targz-Converter-x86_64.AppImage"
+  echo "==> AppImage paketleniyor: $out"
+  ARCH=x86_64 appimagetool "$appdir" "$out" >/dev/null 2>&1 || ARCH=x86_64 appimagetool "$appdir" "$out"
+  chmod +x "$out"
+  rm -rf "$appdir"
+  echo "==> $out"
 }
 
 package_targz() {
@@ -94,6 +133,7 @@ build_target() {
   case "$os" in
     linux)
       case "$fmt" in
+        appimage) package_appimage ;;
         targz|tar.gz) package_targz ;;
         zip) package_zip ;;
         *)
@@ -115,11 +155,12 @@ interactive() {
   banner
   echo
   echo "Paket formati sec:"
-  select f in "tar.gz (.tar.gz)" "zip (.zip)" "Vazgec"; do
+  select f in "AppImage (.AppImage)" "tar.gz (.tar.gz)" "zip (.zip)" "Vazgec"; do
     case "$REPLY" in
-      1) FMT="targz"; break ;;
-      2) FMT="zip"; break ;;
-      3|"") echo "Vazgecildi."; exit 0 ;;
+      1) FMT="appimage"; break ;;
+      2) FMT="targz"; break ;;
+      3) FMT="zip"; break ;;
+      4|"") echo "Vazgecildi."; exit 0 ;;
       *) echo "Gecersiz secim, tekrar dene." ;;
     esac
   done
