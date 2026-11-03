@@ -371,6 +371,17 @@ def _icon_score(parts: list[str], size: int) -> int:
         score += 8
     if low in ("favicon", "splash", "loading", "spinner", "arrow", "check"):
         score -= 60
+    # Karşılama/medya görselleri uygulama simgesi değildir.
+    if any(part.lower() in ("media", "welcome", "welcomeDialog", "announcements",
+                            "gettingStarted", "contrib", "workbench", "browser")
+           for part in parts):
+        score -= 40
+    # Gerçek uygulama simgeleri genelde resources/linux veya icons altında.
+    if any(part.lower() in ("linux", "resources", "icons", "pixmaps", "hicolor")
+           for part in parts):
+        score += 15
+    if low in ("code", "logo", "icon", "app", "main"):
+        score += 20
     return score
 
 
@@ -418,21 +429,42 @@ def _name_bonus(filename: str, wanted: set[str]) -> int:
 def pick_icon(scan_result: Scan, wanted: set[str]) -> Candidate | None:
     if not scan_result.icons:
         return None
-    # Önce adı uygulamayla eşleşen ikonları tercih et.
-    matched = [c for c in scan_result.icons
-               if _name_bonus(Path(c.path).name, wanted) > 0]
-    pool = matched if matched else scan_result.icons
+    bad_name = ("welcome", "dark", "light", "banner", "announcement",
+                "gettingstarted", "screenshot", "opacity", "loading", "spinner")
+    filtered = []
+    for c in scan_result.icons:
+        name = Path(c.path).stem.lower()
+        # Kötü anahtar kelime içeren dosyaları her durumda at.
+        if any(b in name for b in bad_name):
+            continue
+        filtered.append(c)
+    if not filtered:
+        filtered = scan_result.icons
+    # Adı uygulamayla eşleşen ikon varsa sadece onları değerlendir.
+    matched = [c for c in filtered if _name_bonus(Path(c.path).name, wanted) > 0]
+    pool = matched if matched else filtered
     # Standart boyut/hicolor yollarını biraz daha kayır.
     def key(c: Candidate) -> tuple[int, int]:
         bonus = _name_bonus(Path(c.path).name, wanted)
         path = c.path.lower()
+        name = Path(c.path).stem.lower()
         extra = 0
-        if "hicolor" in path:
+        if "hicolor" in path or "pixmaps" in path:
             extra += 20
         if any(size in path for size in ("256x256", "512x512", "128x128")):
             extra += 15
+        if "linux" in path or "resources" in path:
+            extra += 25
+        if name in ("code", "logo", "icon", "app", "main"):
+            extra += 20
+        if name in wanted or any(w in name for w in wanted):
+            extra += 40
         if path.endswith((".svg",)):
             extra += 5
+        # medya/karşılama görsellerini cezalandır
+        if any(bad in path for bad in ("media", "welcome", "announcement",
+                                       "gettingstarted", "contrib", "workbench")):
+            extra -= 50
         return (c.score + bonus + extra, c.size)
     return max(pool, key=key)
 
