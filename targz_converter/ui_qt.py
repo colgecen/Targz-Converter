@@ -146,13 +146,15 @@ class Window(QWidget):
 
         layout = QVBoxLayout(self)
         self.drop = QLabel("Buraya bir .tar.gz dosyası bırak\n"
-                           "veya aşağıdan kendin seç")
+                           "veya buraya tıklayıp kendin seç")
         self.drop.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drop.setMinimumHeight(140)
+        self.drop.setCursor(Qt.CursorShape.PointingHandCursor)
         self.drop.setStyleSheet(
             "QLabel{border: 2px dashed #4a90d9; border-radius: 12px;"
             "background:#f4f8fd; color:#2c3e50; font-size: 15px; padding: 12px;}"
             "QLabel:hover{background:#e8f1fb; border-color:#2c6faf;}")
+        self.drop.mousePressEvent = lambda _event: self._choose()
         layout.addWidget(self.drop)
 
         row = QHBoxLayout()
