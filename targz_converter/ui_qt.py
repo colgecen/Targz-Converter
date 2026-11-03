@@ -219,7 +219,7 @@ class Window(QWidget):
             return
         self.status.setText(f"{archive.name} hazırlanıyor…")
         self.bar.setRange(0, 0)
-        self.log.append(f"→ {archive.name}")
+        self.log.setPlainText(f"→ {archive.name}")
         self.worker = Worker(archive, self.base, self.name.text().strip())
         self.worker.progress.connect(self._on_progress)
         self.worker.finished.connect(self._on_finished)
@@ -228,7 +228,8 @@ class Window(QWidget):
 
     def _on_progress(self, percent: int, message: str) -> None:
         if message:
-            self.log.append(message)
+            # Her adımı aynı satırda güncelleyelim (1/3, 2/3, 3/3 → ✓).
+            self.log.setPlainText(message)
             self.status.setText(message)
         elif percent:
             self.bar.setRange(0, 100)
@@ -238,7 +239,7 @@ class Window(QWidget):
         self.bar.setRange(0, 100)
         self.bar.setValue(100)
         self.status.setText(f"{app.name} hazır ({app.seconds:.1f} sn)")
-        self.log.append(f"✓ {app.name} → {app.exe}")
+        self.log.setPlainText(f"✓ {app.name} → {app.exe}")
         dialog = ResultDialog(self, app)
         dialog.exec()
         for label, path in dialog.written.items():
@@ -254,7 +255,7 @@ class Window(QWidget):
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
         self.status.setText("Olmadı.")
-        self.log.append(f"✗ hata: {message}")
+        self.log.setPlainText(f"✗ hata: {message}")
 
 
 def run(base: Path, files: list[Path] | None = None) -> int:
