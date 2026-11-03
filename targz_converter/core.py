@@ -237,6 +237,7 @@ class Scan:
     names: set[str] = field(default_factory=set)
     exes: list[Candidate] = field(default_factory=list)
     icons: list[Candidate] = field(default_factory=list)
+    desktop_icon: str | None = None
     preferred_root: str = ""
 
 
@@ -282,6 +283,19 @@ def scan(archive: Path) -> Scan:
 
             result.file_count += 1
             result.size_total += member.size
+
+            # .desktop içinde Icon= varsa yakala.
+            if name.lower().endswith(".desktop"):
+                try:
+                    handle = tar.extractfile(member)
+                    if handle is not None:
+                        text = handle.read(4096).decode("utf-8", errors="ignore")
+                        for line in text.splitlines():
+                            if line.startswith("Icon="):
+                                result.desktop_icon = line.split("=", 1)[1].strip()
+                                break
+                except Exception:
+                    pass
 
             parts = [p for p in name.split("/") if p not in ("", ".")]
             icon_related = any(p.lower() in ("icons", "icon", "pixmaps", "hicolor") for p in parts)
@@ -774,6 +788,13 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
 
     exe_candidate = pick_exe(info, wanted_tokens(stem, info.root))
     icon_candidate = pick_icon(info, wanted_tokens(stem, info.root))
+    # Arşiv içindeki .desktop Icon= ile belirtilen simgeyi tercih et.
+    if info.desktop_icon:
+        wanted_icon = info.desktop_icon
+        for c in info.icons:
+            if Path(c.path).stem == wanted_icon or Path(c.path).stem.lower() == wanted_icon.lower():
+                icon_candidate = c
+                break
     guess = exe_candidate.path[len(info.root) + 1:] if info.root else exe_candidate.path
     message(i18n.t("msg_found", guess=guess, count=info.file_count, size=human_size(info.size_total)))
 
