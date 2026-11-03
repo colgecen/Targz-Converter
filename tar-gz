@@ -14,6 +14,7 @@
 set -euo pipefail
 
 VERSION="${VERSION:-1.0.0}"
+ARCH="${ARCH:-x86_64}"
 resolve_root() {
   local src="${BASH_SOURCE[0]}"
   while [ -L "$src" ]; do
@@ -100,9 +101,9 @@ exec python3 "$HERE/usr/bin/targz2app.py" "$@"
 APPRUN
   chmod +x "$appdir/AppRun"
 
-  local out="$ROOT/build/Targz-Converter-x86_64.AppImage"
+  local out="$ROOT/build/Targz-Converter-$ARCH.AppImage"
   echo "==> AppImage paketleniyor: $out"
-  ARCH=x86_64 appimagetool "$appdir" "$out" >/dev/null 2>&1 || ARCH=x86_64 appimagetool "$appdir" "$out"
+  ARCH="$ARCH" appimagetool "$appdir" "$out" >/dev/null 2>&1 || ARCH="$ARCH" appimagetool "$appdir" "$out"
   chmod +x "$out"
   rm -rf "$appdir"
   echo "==> $out"
