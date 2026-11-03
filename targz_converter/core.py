@@ -30,6 +30,7 @@ SKIP_DIRS = frozenset(
         "site-packages", "venv", "env", "test", "tests", "samples", "examples",
         "extra", "data", "res", "usr", "etc", "var", "tmp", "cache", "logfiles",
         "crashpad", "scripts", "tools", "bin64", "bin32", "browser", "contents",
+        "node_modules", "extensions",
         "game", "meta", "drivers", "firmware", "fonts",
     }
 )
@@ -282,10 +283,15 @@ def scan(archive: Path) -> Scan:
             result.size_total += member.size
 
             parts = [p for p in name.split("/") if p not in ("", ".")]
-            if any(p.lower() in SKIP_DIRS for p in parts[:-1]):
+            icon_related = any(p.lower() in ("icons", "icon", "pixmaps", "hicolor") for p in parts)
+            is_icon = Path(name).suffix.lower() in (".png", ".svg", ".ico", ".xpm")
+            bad_parts = {"node_modules", "extensions", "test", "tests", "samples", "examples"}
+            if any(p.lower() in bad_parts for p in parts):
+                continue
+            if any(p.lower() in SKIP_DIRS for p in parts[:-1]) and not icon_related and not is_icon:
                 continue
             depth = len(parts) - 1
-            if depth > 3:
+            if depth > 3 and not icon_related and not is_icon:
                 continue
 
             score = 0
@@ -342,8 +348,10 @@ def _icon_score(parts: list[str], size: int) -> int:
         score = 50
     if any(token in low for token in ("logo", "icon", "app", "icon_256", "master")):
         score += 15
-    if any(part.lower() in ("hicolor", "icons", "icon") for part in parts[:-1]):
+    if any(part.lower() in ("hicolor", "icons", "icon", "pixmaps") for part in parts[:-1]):
         score += 10
+    if any(part.lower() in ("256x256", "512x512", "128x128", "scalable") for part in parts):
+        score += 15
     if len(parts) <= 2:
         score += 8
     if low in ("favicon", "splash", "loading", "spinner", "arrow", "check"):
@@ -395,8 +403,56 @@ def _name_bonus(filename: str, wanted: set[str]) -> int:
 def pick_icon(scan_result: Scan, wanted: set[str]) -> Candidate | None:
     if not scan_result.icons:
         return None
-    return max(scan_result.icons,
-               key=lambda c: (c.score + _name_bonus(Path(c.path).name, wanted), c.size))
+    # Önce adı uygulamayla eşleşen ikonları tercih et.
+    matched = [c for c in scan_result.icons
+               if _name_bonus(Path(c.path).name, wanted) > 0]
+    pool = matched if matched else scan_result.icons
+    # Standart boyut/hicolor yollarını biraz daha kayır.
+    def key(c: Candidate) -> tuple[int, int]:
+        bonus = _name_bonus(Path(c.path).name, wanted)
+        path = c.path.lower()
+        extra = 0
+        if "hicolor" in path:
+            extra += 20
+        if any(size in path for size in ("256x256", "512x512", "128x128")):
+            extra += 15
+        if path.endswith((".svg",)):
+            extra += 5
+        return (c.score + bonus + extra, c.size)
+    return max(pool, key=key)
+
+
+def _desktop_icon_name(scan_base: Path) -> str | None:
+    """Paket içindeki .desktop dosyasında Icon= ile verilen simge adını döndürür."""
+    for dp, _dn, fns in os.walk(scan_base):
+        for fn in fns:
+            if not fn.lower().endswith(".desktop"):
+                continue
+            try:
+                text = (Path(dp) / fn).read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if line.startswith("Icon="):
+                    return line.split("=", 1)[1].strip()
+    return None
+
+
+def _find_icon_file(scan_base: Path, icon_name: str) -> Path | None:
+    """Verilen simge adıyla (uzantısız) eşleşen dosyayı paket içinde bulur."""
+    if not icon_name or "/" in icon_name or "." in icon_name.split("/")[-1]:
+        # Tema simgesi adı veya uzantılı tam yol: dosya araması yapma.
+        if "/" in icon_name:
+            candidate = scan_base / icon_name.lstrip("/")
+            if candidate.is_file():
+                return candidate
+        return None
+    for dp, _dn, fns in os.walk(scan_base):
+        for fn in fns:
+            if os.path.splitext(fn)[0] == icon_name and fn.lower().endswith(
+                    (".png", ".svg", ".ico", ".xpm")):
+                return Path(dp) / fn
+    return None
 
 
 def guess_categories(*texts: str) -> str:
@@ -505,12 +561,18 @@ def scan_directory(base: Path) -> Scan:
         if len(parts) > 3:
             dirnames[:] = [d for d in dirnames if not (d.lower() in SKIP_DIRS or d.startswith("."))]
             continue
+        icon_related = any(p.lower() in ("icons", "icon", "pixmaps", "hicolor") for p in parts)
+        bad_parts = {"node_modules", "extensions", "test", "tests", "samples", "examples"}
+        if any(p.lower() in bad_parts for p in parts):
+            dirnames[:] = []
+            continue
         helper_hit = any(part.lower() in SKIP_DIRS for part in parts[1:])
-        if helper_hit and parent_dir not in BIN_PARENTS and len(parts) > 1:
+        if helper_hit and parent_dir not in BIN_PARENTS and len(parts) > 1 and not icon_related:
             dirnames[:] = [d for d in dirnames if not (d.lower() in SKIP_DIRS or d.startswith("."))]
             continue
         for filename in sorted(filenames):
-            if len(parts) > 3:
+            max_depth = 7 if icon_related else 3
+            if len(parts) > max_depth:
                 continue
             path = Path(dirpath) / filename
             low = filename.lower()
@@ -543,6 +605,38 @@ def scan_directory(base: Path) -> Scan:
             icon_score = _icon_score(parts + [filename], size)
             if icon_score:
                 result.icons.append(Candidate(candidate_path, size, icon_score))
+    # İkonlar çoğunlukla /usr/share/icons, /usr/share/pixmaps gibi
+    # SKIP_DIRS altında kaldığı için ana taramada atlanır; burada ayrıca topla.
+    seen_icons = {c.path for c in result.icons}
+    for dirpath, _dirnames, filenames in os.walk(base, followlinks=False):
+        rel_dir = Path(dirpath).relative_to(base).as_posix()
+        parts = [] if rel_dir == "." else rel_dir.split("/")
+        if len(parts) > 8:
+            continue
+        bad_parts = {"node_modules", "extensions", "test", "tests", "samples", "examples"}
+        if any(p.lower() in bad_parts for p in parts):
+            continue
+        # İkonlar her klasörde olabilir; SKIP_DIRS ikon toplamayı engellemesin.
+        for filename in filenames:
+            low = filename.lower()
+            if not low.endswith((".png", ".svg", ".ico", ".xpm")):
+                continue
+            path = Path(dirpath) / filename
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            if not (32 < size < 4_000_000):
+                continue
+            if low.startswith(("tv_", "setup", "unins", "crashpad")) or "crashpad" in low:
+                continue
+            candidate_path = path.relative_to(base).as_posix()
+            if candidate_path in seen_icons:
+                continue
+            sc = _icon_score(parts + [filename], size)
+            if sc:
+                result.icons.append(Candidate(candidate_path, size, sc))
+                seen_icons.add(candidate_path)
     return result
 
 
@@ -649,6 +743,13 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
         wanted = wanted_tokens(stem, info.root)
         exe_candidate = pick_exe(info, wanted, prefer_bin=True)
         icon_candidate = pick_icon(info, wanted)
+        # Paketin kendi .desktop dosyası Icon= ile simge belirtmişse onu tercih et.
+        desktop_icon = _desktop_icon_name(scan_base)
+        if desktop_icon:
+            found_icon = _find_icon_file(scan_base, desktop_icon)
+            if found_icon is not None:
+                icon_candidate = Candidate(found_icon.relative_to(scan_base).as_posix(),
+                                          found_icon.stat().st_size, 10**6)
         app_name = name or pretty_name(stem, Path(exe_candidate.path).name)
         slug = slugify(app_name)
         exe = scan_base / exe_candidate.path
