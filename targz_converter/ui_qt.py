@@ -14,7 +14,8 @@ from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDialog, QFileDialog, QHBoxLayout, QLabel,
-    QLineEdit, QProgressBar, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QLineEdit, QMessageBox, QProgressBar, QPushButton, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from . import core, desktop
@@ -130,6 +131,42 @@ class ResultDialog(QDialog):
         self.accept()
 
 
+
+class MultiWorker(QThread):
+    """Birden fazla arşivi sırayla dönüştürür."""
+
+    progress = Signal(int, str)
+    app_ready = Signal(int, object)
+    app_failed = Signal(int, str)
+    all_done = Signal(list, list)
+
+    def __init__(self, archives: list[Path], base: Path, name: str) -> None:
+        super().__init__()
+        self.archives, self.base, self.name = archives, base, name
+
+    def run(self) -> None:  # noqa: D102
+        apps: list[core.App] = []
+        failures: list[tuple[str, str]] = []
+        total = len(self.archives)
+        for index, archive in enumerate(self.archives):
+            prefix = f"{index + 1}/{total}"
+            self.progress.emit(index, f"{prefix}: {archive.name} hazırlanıyor…")
+            try:
+                app = core.convert(
+                    archive, self.base, self.name,
+                    progress=lambda value, i=index, a=archive, p=prefix:
+                        self.progress.emit(i, f"{p}: {a.name} … {int(value * 100)}%"),
+                    message=lambda text, i=index, p=prefix:
+                        self.progress.emit(i, f"{p}: {text}"),
+                )
+                apps.append(app)
+                self.app_ready.emit(index, app)
+            except Exception as exc:  # noqa: BLE001
+                failures.append((archive.name, str(exc)))
+                self.app_failed.emit(index, str(exc))
+        self.all_done.emit(apps, failures)
+
+
 class Window(QWidget):
     """Tek satırlık sürükle-bırak alanı, ilerleme çubuğu ve günlük."""
 
@@ -137,6 +174,7 @@ class Window(QWidget):
         super().__init__()
         self.base = base
         self.worker: Worker | None = None
+        self.multi_worker: MultiWorker | None = None
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(640, 300)
         self.setAcceptDrops(True)
@@ -194,22 +232,53 @@ class Window(QWidget):
 
     def dropEvent(self, event) -> None:  # noqa: N802
         self.dragLeaveEvent(event)
+        paths = []
         for url in event.mimeData().urls():
             path = Path(url.toLocalFile())
             if _is_supported(path):
-                self.convert(path)
-            else:
-                self.status.setText(f"{path.name} desteklenmiyor "
-                                    f"(.tar.gz, .tgz, .tar.xz, .AppImage olur)")
+                paths.append(path)
+        if len(paths) == 1:
+            self.convert(paths[0])
+        elif len(paths) > 1:
+            self.convert_many(paths)
+        elif paths == [] and event.mimeData().urls():
+            # desteklenmeyen dosya bırakıldı
+            path = Path(event.mimeData().urls()[0].toLocalFile())
+            self.status.setText(f"{path.name} desteklenmiyor "
+                                f"(.tar.gz, .tgz, .tar.xz, .AppImage olur)")
+
+    def _on_multi_progress(self, _index: int, message: str) -> None:
+        self.log.setPlainText(message)
+        self.status.setText(message)
+
+    def _on_multi_failed(self, _index: int, message: str) -> None:
+        self.log.setPlainText(f"✗ {message}")
+
+    def _on_multi_done(self, apps: list, failures: list) -> None:
+        self.bar.setRange(0, 100)
+        self.bar.setValue(100)
+        self.status.setText(f"{len(apps)} uygulama hazır")
+        self.log.clear()
+        dialog = MultiResultDialog(self, apps, failures)
+        dialog.exec()
+        self.log.clear()
+        self.bar.setValue(0)
+        self.status.setText("Hazır — yeni bir arşiv sürükle veya seç.")
+        self.multi_worker = None
 
     def _choose(self) -> None:
         patterns = " ".join(f"*.{suffix.lstrip('.')}" for suffix in sorted(set(core.SUPPORTED_SUFFIXES)))
-        filename, _ = QFileDialog.getOpenFileName(
-            self, "Arşivi seç", str(core.download_dir()),
+        filenames, _ = QFileDialog.getOpenFileNames(
+            self, "Arşivleri seç", str(core.download_dir()),
             f"Sıkıştırılmış uygulamalar ({patterns})",
         )
-        if filename:
-            self.convert(Path(filename))
+        paths = [Path(name) for name in filenames if _is_supported(Path(name))]
+        if not paths:
+            return
+        if len(paths) == 1:
+            self.convert(paths[0])
+        else:
+            self.convert_many(paths)
 
     # ---------------- iş akışı ---------------- #
 
@@ -225,6 +294,25 @@ class Window(QWidget):
         self.worker.finished.connect(self._on_finished)
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
+
+    def convert_many(self, archives: list[Path]) -> None:
+        if (self.worker is not None and self.worker.isRunning()) or \
+                (self.multi_worker is not None and self.multi_worker.isRunning()):
+            self.status.setText("Bir iş zaten sürüyor, birazdan sıraya girsin.")
+            return
+        if not archives:
+            return
+        if len(archives) == 1:
+            self.convert(archives[0])
+            return
+        self.status.setText(f"{len(archives)} uygulama hazırlanıyor…")
+        self.bar.setRange(0, 0)
+        self.log.setPlainText(f"{len(archives)} uygulama hazırlanıyor…")
+        self.multi_worker = MultiWorker(archives, self.base, self.name.text().strip())
+        self.multi_worker.progress.connect(self._on_multi_progress)
+        self.multi_worker.app_failed.connect(self._on_multi_failed)
+        self.multi_worker.all_done.connect(self._on_multi_done)
+        self.multi_worker.start()
 
     def _on_progress(self, percent: int, message: str) -> None:
         if message:
@@ -256,6 +344,137 @@ class Window(QWidget):
         self.bar.setValue(0)
         self.status.setText("Olmadı.")
         self.log.setPlainText(f"✗ hata: {message}")
+
+
+
+class MultiResultDialog(QDialog):
+    """Birden fazla dönüştürme bittikten sonra toplu seçim ekranı."""
+
+    def __init__(self, parent: QWidget, apps: list, failures: list) -> None:
+        super().__init__(parent)
+        self.apps = apps
+        self.failures = failures
+        self.index = 0
+        self._states: dict[int, dict[str, bool]] = {}
+        self._shown_at: float = 0.0
+        self.setWindowTitle("Toplu dönüşüm sonucu")
+        self.setMinimumWidth(520)
+
+        layout = QVBoxLayout(self)
+
+        if failures:
+            fail_text = "Yüklenemeyenler:\n" + "\n".join(
+                f"  • {name}: {err}" for name, err in failures)
+            fail_label = QLabel(fail_text)
+            fail_label.setStyleSheet("color:#c0392b;")
+            fail_label.setWordWrap(True)
+            layout.addWidget(fail_label)
+
+        self.info = QLabel()
+        self.info.setWordWrap(True)
+        layout.addWidget(self.info)
+
+        self.desktop_cb = QCheckBox("Masaüstüne kısayol oluştur")
+        self.desktop_cb.setChecked(True)
+        self.autostart_cb = QCheckBox("Başlangıçta çalıştır")
+        self.run_cb = QCheckBox("Şimdi çalıştır")
+        layout.addWidget(self.desktop_cb)
+        layout.addWidget(self.autostart_cb)
+        layout.addWidget(self.run_cb)
+
+        nav = QHBoxLayout()
+        self.prev_btn = QPushButton("◀ Geri")
+        self.next_btn = QPushButton("İleri ▶")
+        self.all_btn = QPushButton("Hepsini kısayol oluştur")
+        nav.addWidget(self.prev_btn)
+        nav.addWidget(self.next_btn)
+        nav.addStretch(1)
+        nav.addWidget(self.all_btn)
+        layout.addLayout(nav)
+
+        bottom = QHBoxLayout()
+        self.ok_btn = QPushButton("TAMAM")
+        self.ok_btn.setDefault(True)
+        bottom.addStretch(1)
+        bottom.addWidget(self.ok_btn)
+        layout.addLayout(bottom)
+
+        self.prev_btn.clicked.connect(self._prev)
+        self.next_btn.clicked.connect(self._next)
+        self.all_btn.clicked.connect(self._all_shortcuts)
+        self.ok_btn.clicked.connect(self._finish)
+
+        self._update_view()
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().showEvent(event)
+        self._shown_at = time.monotonic()
+
+    def _save_state(self) -> None:
+        self._states[self.index] = {
+            "desktop": self.desktop_cb.isChecked(),
+            "autostart": self.autostart_cb.isChecked(),
+            "run": self.run_cb.isChecked(),
+        }
+
+    def _update_view(self) -> None:
+        if not self.apps:
+            self.info.setText("Başarılı uygulama yok.")
+            self.prev_btn.setEnabled(False)
+            self.next_btn.setEnabled(False)
+            self.all_btn.setEnabled(False)
+            self.ok_btn.setEnabled(False)
+            return
+        app = self.apps[self.index]
+        self.info.setText(
+            f"<b>{app.name}</b>  ({self.index + 1}/{len(self.apps)})<br/>"
+            f"<span style='color:#7f8c8d'>{app.exe}</span>")
+        self.prev_btn.setEnabled(self.index > 0)
+        self.next_btn.setEnabled(self.index < len(self.apps) - 1)
+        state = self._states.get(self.index, {
+            "desktop": True, "autostart": False, "run": False})
+        self.desktop_cb.setChecked(state["desktop"])
+        self.autostart_cb.setChecked(state["autostart"])
+        self.run_cb.setChecked(state["run"])
+
+    def _prev(self) -> None:
+        self._save_state()
+        if self.index > 0:
+            self.index -= 1
+            self._update_view()
+
+    def _next(self) -> None:
+        self._save_state()
+        if self.index < len(self.apps) - 1:
+            self.index += 1
+            self._update_view()
+
+    def _all_shortcuts(self) -> None:
+        if time.monotonic() - self._shown_at < 0.4:
+            return
+        reply = QMessageBox.question(
+            self, "Onay", "Tüm uygulamalar için kısayol oluşturulsun mu?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for app in self.apps:
+            desktop.install(app, desktop=True, autostart=False)
+        self.accept()
+
+    def _finish(self) -> None:
+        if time.monotonic() - self._shown_at < 0.4:
+            return
+        self._save_state()
+        for i, app in enumerate(self.apps):
+            state = self._states.get(i, {
+                "desktop": True, "autostart": False, "run": False})
+            written = desktop.install(
+                app, desktop=state["desktop"], autostart=state["autostart"])
+            if state["run"]:
+                desktop.launch(app)
+        self.accept()
+
 
 
 def run(base: Path, files: list[Path] | None = None) -> int:
