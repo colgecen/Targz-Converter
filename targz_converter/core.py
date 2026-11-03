@@ -10,6 +10,7 @@ Hız buradaki iki karardan gelir:
 from __future__ import annotations
 
 import os
+from . import i18n
 import re
 import shutil
 import subprocess
@@ -474,16 +475,16 @@ def unpack(archive: Path, dest: Path, progress=None) -> str:
     if has_suffix(archive, (".zip",)):
         unzip = shutil.which("unzip")
         if not unzip:
-            raise RuntimeError("ZIP açmak için unzip gerekli (apt: unzip).")
+            raise RuntimeError(i18n.t("err_zip_unzip"))
         done = subprocess.run([unzip, "-o", "-q", str(archive), "-d", str(dest)],
                                capture_output=True, text=True, timeout=3600)
         if done.returncode != 0:
-            raise RuntimeError(f"ZIP açılamadı: {(done.stderr or done.stdout).strip()[:300]}")
+            raise RuntimeError(i18n.t("err_zip_fail") if False else f"ZIP: {(done.stderr or done.stdout).strip()[:300]}")
         used = "unzip"
     elif has_suffix(archive, (".7z",)):
         seven = shutil.which("7z") or shutil.which("7za") or shutil.which("7zr")
         if not seven:
-            raise RuntimeError("7z açmak için 7z/p7zip gerekli (apt: p7zip-full).")
+            raise RuntimeError(i18n.t("err_7z_missing"))
         done = subprocess.run([seven, "x", "-y", str(archive), f"-o{dest}"],
                                capture_output=True, text=True, timeout=3600)
         if done.returncode != 0:
@@ -498,9 +499,9 @@ def unpack(archive: Path, dest: Path, progress=None) -> str:
             if done.returncode == 0:
                 used = "pigz+tar" if "pigz" in " ".join(cmd) else "tar"
             else:
-                log(f"tar başarısız, Python motoruna dönülüyor: {done.stderr.strip()[:200]}")
+                log(f"tar: {done.stderr.strip()[:200]}")
         except (OSError, subprocess.TimeoutExpired) as exc:
-            log(f"tar çalıştırılamadı ({exc}), Python motoruna dönülüyor")
+            log(f"tar: {exc}")
     if used == "tarfile":
         with tarfile.open(archive, "r:*") as tar:
             members = list(tar)
@@ -646,8 +647,7 @@ def _unpack_rpm(archive: Path, dest: Path, progress=None) -> str:
     rpm2cpio = shutil.which("rpm2cpio")
     cpio = shutil.which("cpio")
     if not rpm2cpio or not cpio:
-        raise RuntimeError("RPM açmak için rpm2cpio ve cpio gerekli "
-                           "(apt: rpm2cpio cpio | dnf: rpm2cpio cpio).")
+        raise RuntimeError(i18n.t("err_rpm_missing"))
     done = subprocess.run(["sh", "-c", f"{rpm2cpio} {archive} | {cpio} -idm"],
                            cwd=str(dest), capture_output=True, text=True, timeout=3600)
     if progress:
@@ -660,7 +660,7 @@ def _unpack_deb(archive: Path, dest: Path, progress=None) -> str:
     dest.mkdir(parents=True, exist_ok=True)
     dpkg_deb = shutil.which("dpkg-deb")
     if not dpkg_deb:
-        raise RuntimeError("DEB açmak için dpkg-deb gerekli (apt: dpkg).")
+        raise RuntimeError(i18n.t("err_deb_missing"))
     done = subprocess.run(["dpkg-deb", "-x", str(archive), str(dest)],
                            capture_output=True, text=True, timeout=3600)
     if done.returncode != 0:
@@ -680,7 +680,7 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
     started = time.time()
     archive = archive.expanduser().resolve()
     if not archive.is_file():
-        raise FileNotFoundError(f"dosya bulunamadı: {archive}")
+        raise FileNotFoundError(i18n.t("err_not_found_file", path=archive))
     stem = archive_stem(archive)
 
     if has_suffix(archive, BARE_SUFFIXES) and not has_suffix(archive, ARCHIVE_SUFFIXES):
@@ -715,7 +715,7 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
         # Flatpak: .flatpak tek dosya (commit) tutar, .flatpakref ise remote referansıdır.
         started = time.time()
         if has_suffix(archive, (".flatpakref",)):
-            raise RuntimeError(f"'{archive.name}' bir Flatpak uygulama paketi/değil (flatpakref, remote referansı).")
+            raise RuntimeError(i18n.t("err_flatpak", name=archive.name))
         flat_dir = _install_dir(base, slugify(archive_stem(archive)))
         flat_exe = flat_dir / archive.name
         flat_exe.parent.mkdir(parents=True, exist_ok=True)
@@ -763,25 +763,24 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
                    slug=slug, icon=icon, categories=guess_categories(stem, app_name, info.root),
                    size=dir_size(scan_base), seconds=time.time() - started)
 
-    message(f"[1/3] {archive.name} taranıyor...")
+    message(i18n.t("msg_scan", name=archive.name))
     info = scan(archive)
     if not info.exes:
-        raise LookupError("arşivde çalıştırılabilir bir uygulama bulunamadı")
+        raise LookupError(i18n.t("err_no_exe"))
 
     free = free_bytes(base)
     if info.size_total * 2 > free:
-        raise OSError(f"yeterli boş alan yok: gereken ~{human_size(info.size_total * 2)}")
+        raise OSError(i18n.t("err_no_space", size=human_size(info.size_total * 2)))
 
     exe_candidate = pick_exe(info, wanted_tokens(stem, info.root))
     icon_candidate = pick_icon(info, wanted_tokens(stem, info.root))
     guess = exe_candidate.path[len(info.root) + 1:] if info.root else exe_candidate.path
-    message(f"[1/3] çalıştırılabilir bulundu: {guess} "
-            f"({info.file_count} dosya, ~{human_size(info.size_total)})")
+    message(i18n.t("msg_found", guess=guess, count=info.file_count, size=human_size(info.size_total)))
 
     app_name = name or pretty_name(stem, Path(exe_candidate.path).name)
     slug = slugify(app_name)
     target = _install_dir(base, slug)
-    message(f"[2/3] {target} içine açılıyor...")
+    message(i18n.t("msg_extract", target=target))
 
     def _progress(value: float) -> None:
         if progress:
@@ -796,7 +795,7 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
     if not exe.is_file():
         found = _locate(root, Path(exe_candidate.path).name)
         if found is None:
-            raise FileNotFoundError("açma sonrası çalıştırılabilir bulunamadı")
+            raise FileNotFoundError(i18n.t("err_no_exe_after"))
         exe = found
     exe.chmod(exe.stat().st_mode | 0o755)
 
@@ -807,7 +806,7 @@ def convert(archive: Path, base: Path, name: str = "", progress=None,
         if not icon.is_file():
             icon = _locate(root, Path(icon_candidate.path).name)
 
-    message(f"[3/3] tamam ({engine} motoru)")
+    message(i18n.t("msg_done_engine", engine=engine))
     return App(archive=archive, install_dir=target, exe=exe, name=app_name, slug=slug,
                icon=icon, categories=guess_categories(stem, app_name, info.root),
                size=dir_size(target), seconds=time.time() - started)

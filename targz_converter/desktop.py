@@ -16,6 +16,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import i18n
 from .core import App, human_size
 
 APP_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
@@ -244,7 +245,7 @@ def launch(app: App) -> None:
 
 def summary(app: App, written: dict[str, Path]) -> str:
     """Kullanıcıya gösterilecek kısa özet satırları."""
-    lines = [f"{app.name} hazır — {human_size(app.size)}, {app.seconds:.1f} saniye"]
+    lines = [i18n.t("msg_ready", name=app.name, size=human_size(app.size), seconds=f"{app.seconds:.1f}")]
     lines += [f"  {label}: {path}" for label, path in written.items()]
     lines.append(f"  program: {app.exe}")
     return "\n".join(lines)

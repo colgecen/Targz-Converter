@@ -18,9 +18,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from . import core, desktop
+from . import core, desktop, i18n
 
-WINDOW_TITLE = "Targz Converter — arşivi sürükle, uygulama olsun"
+WINDOW_TITLE = i18n.t("app_title")
 
 
 def _app_icon_path() -> Path | None:
@@ -71,31 +71,30 @@ class ResultDialog(QDialog):
         self.app = app
         self.written: dict[str, Path] = {}
         self._shown_at: float = 0.0
-        self.setWindowTitle(f"{app.name} hazır")
+        self.setWindowTitle(i18n.t("result_title", name=app.name))
         self.setModal(True)
         self.setMinimumWidth(460)
 
         layout = QVBoxLayout(self)
-        info = QLabel(f"<b>{app.name}</b> hazır<br/>"
-                      f"<span style='color:#7f8c8d'>{core.human_size(app.size)} · "
-                      f"{app.seconds:.1f} sn · {app.exe}</span>")
+        info = QLabel(i18n.t("result_info", name=app.name, size=core.human_size(app.size),
+                      seconds=f"{app.seconds:.1f}", exe=app.exe))
         info.setTextFormat(Qt.TextFormat.RichText)
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        self.autostart = QCheckBox("Başlangıçta çalıştır (oturum açınca kendiliğinden açılsın)")
-        self.desktop = QCheckBox("Masaüstüne kısayol oluştur")
+        self.autostart = QCheckBox(i18n.t("autostart_cb"))
+        self.desktop = QCheckBox(i18n.t("desktop_cb"))
         self.desktop.setChecked(True)
         layout.addWidget(self.autostart)
         layout.addWidget(self.desktop)
 
-        note = QLabel("İkisi de seçilmezse uygulama yalnızca Uygulamalar menüsünde görünür.")
+        note = QLabel(i18n.t("result_note"))
         note.setStyleSheet("color:#7f8c8d;")
         layout.addWidget(note)
 
         buttons = QHBoxLayout()
-        self.run_now = QPushButton("Şimdi Çalıştır")
-        self.close_button = QPushButton("TAMAM")
+        self.run_now = QPushButton(i18n.t("run_now"))
+        self.close_button = QPushButton(i18n.t("ok"))
         self.close_button.setDefault(True)
         buttons.addStretch(1)
         buttons.addWidget(self.run_now)
@@ -175,7 +174,7 @@ class Window(QWidget):
         self.base = base
         self.worker: Worker | None = None
         self.multi_worker: MultiWorker | None = None
-        self.setWindowTitle(WINDOW_TITLE)
+        self.setWindowTitle(i18n.t("app_title"))
         self.resize(640, 300)
         self.setAcceptDrops(True)
         icon_path = _app_icon_path()
@@ -183,8 +182,7 @@ class Window(QWidget):
             self.setWindowIcon(QIcon(str(icon_path)))
 
         layout = QVBoxLayout(self)
-        self.drop = QLabel("Buraya bir .tar.gz dosyası bırak\n"
-                           "veya buraya tıklayıp kendin seç")
+        self.drop = QLabel(i18n.t("drop_label"))
         self.drop.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drop.setMinimumHeight(140)
         self.drop.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -196,10 +194,10 @@ class Window(QWidget):
         layout.addWidget(self.drop)
 
         row = QHBoxLayout()
-        self.pick = QPushButton("Dosya seç…")
+        self.pick = QPushButton(i18n.t("pick_button"))
         self.pick.clicked.connect(self._choose)
         self.name = QLineEdit()
-        self.name.setPlaceholderText("Uygulama adı (boş bırakırsan kendimiz buluruz)")
+        self.name.setPlaceholderText(i18n.t("name_placeholder"))
         row.addWidget(self.pick)
         row.addWidget(self.name, 1)
         layout.addLayout(row)
@@ -257,20 +255,20 @@ class Window(QWidget):
     def _on_multi_done(self, apps: list, failures: list) -> None:
         self.bar.setRange(0, 100)
         self.bar.setValue(100)
-        self.status.setText(f"{len(apps)} uygulama hazır")
+        self.status.setText(i18n.t("status_multi_done", n=len(apps)))
         self.log.clear()
         dialog = MultiResultDialog(self, apps, failures)
         dialog.exec()
         self.log.clear()
         self.bar.setValue(0)
-        self.status.setText("Hazır — yeni bir arşiv sürükle veya seç.")
+        self.status.setText(i18n.t("status_reset"))
         self.multi_worker = None
 
     def _choose(self) -> None:
         patterns = " ".join(f"*.{suffix.lstrip('.')}" for suffix in sorted(set(core.SUPPORTED_SUFFIXES)))
         filenames, _ = QFileDialog.getOpenFileNames(
             self, "Arşivleri seç", str(core.download_dir()),
-            f"Sıkıştırılmış uygulamalar ({patterns})",
+            i18n.t("file_filter", patterns=patterns),
         )
         paths = [Path(name) for name in filenames if _is_supported(Path(name))]
         if not paths:
@@ -284,11 +282,11 @@ class Window(QWidget):
 
     def convert(self, archive: Path) -> None:
         if self.worker is not None and self.worker.isRunning():
-            self.status.setText("Bir iş zaten sürüyor, birazdan sıraya girsin.")
+            self.status.setText(i18n.t("status_busy"))
             return
-        self.status.setText(f"{archive.name} hazırlanıyor…")
+        self.status.setText(i18n.t("converting", name=archive.name))
         self.bar.setRange(0, 0)
-        self.log.setPlainText(f"→ {archive.name}")
+        self.log.setPlainText(i18n.t("log_start", name=archive.name))
         self.worker = Worker(archive, self.base, self.name.text().strip())
         self.worker.progress.connect(self._on_progress)
         self.worker.finished.connect(self._on_finished)
@@ -298,16 +296,16 @@ class Window(QWidget):
     def convert_many(self, archives: list[Path]) -> None:
         if (self.worker is not None and self.worker.isRunning()) or \
                 (self.multi_worker is not None and self.multi_worker.isRunning()):
-            self.status.setText("Bir iş zaten sürüyor, birazdan sıraya girsin.")
+            self.status.setText(i18n.t("status_busy"))
             return
         if not archives:
             return
         if len(archives) == 1:
             self.convert(archives[0])
             return
-        self.status.setText(f"{len(archives)} uygulama hazırlanıyor…")
+        self.status.setText(i18n.t("status_multi_ready", n=len(archives)))
         self.bar.setRange(0, 0)
-        self.log.setPlainText(f"{len(archives)} uygulama hazırlanıyor…")
+        self.log.setPlainText(i18n.t("status_multi_ready", n=len(archives)))
         self.multi_worker = MultiWorker(archives, self.base, self.name.text().strip())
         self.multi_worker.progress.connect(self._on_multi_progress)
         self.multi_worker.app_failed.connect(self._on_multi_failed)
@@ -326,8 +324,8 @@ class Window(QWidget):
     def _on_finished(self, app: core.App) -> None:
         self.bar.setRange(0, 100)
         self.bar.setValue(100)
-        self.status.setText(f"{app.name} hazır ({app.seconds:.1f} sn)")
-        self.log.setPlainText(f"✓ {app.name} → {app.exe}")
+        self.status.setText(i18n.t("result_title", name=app.name))
+        self.log.setPlainText(i18n.t("log_done", name=app.name, exe=app.exe))
         dialog = ResultDialog(self, app)
         dialog.exec()
         for label, path in dialog.written.items():
@@ -337,13 +335,13 @@ class Window(QWidget):
         self.log.clear()
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
-        self.status.setText("Hazır — yeni bir arşiv sürükle veya seç.")
+        self.status.setText(i18n.t("status_reset"))
 
     def _on_failed(self, message: str) -> None:
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
-        self.status.setText("Olmadı.")
-        self.log.setPlainText(f"✗ hata: {message}")
+        self.status.setText(i18n.t("status_failed"))
+        self.log.setPlainText(i18n.t("log_error", msg=message))
 
 
 
@@ -357,13 +355,13 @@ class MultiResultDialog(QDialog):
         self.index = 0
         self._states: dict[int, dict[str, bool]] = {}
         self._shown_at: float = 0.0
-        self.setWindowTitle("Toplu dönüşüm sonucu")
+        self.setWindowTitle(i18n.t("multi_title"))
         self.setMinimumWidth(520)
 
         layout = QVBoxLayout(self)
 
         if failures:
-            fail_text = "Yüklenemeyenler:\n" + "\n".join(
+            fail_text = i18n.t("multi_failed") + "\n" + "\n".join(
                 f"  • {name}: {err}" for name, err in failures)
             fail_label = QLabel(fail_text)
             fail_label.setStyleSheet("color:#c0392b;")
@@ -374,18 +372,18 @@ class MultiResultDialog(QDialog):
         self.info.setWordWrap(True)
         layout.addWidget(self.info)
 
-        self.desktop_cb = QCheckBox("Masaüstüne kısayol oluştur")
+        self.desktop_cb = QCheckBox(i18n.t("desktop_cb"))
         self.desktop_cb.setChecked(True)
-        self.autostart_cb = QCheckBox("Başlangıçta çalıştır")
-        self.run_cb = QCheckBox("Şimdi çalıştır")
+        self.autostart_cb = QCheckBox(i18n.t("autostart_cb"))
+        self.run_cb = QCheckBox(i18n.t("run_now"))
         layout.addWidget(self.desktop_cb)
         layout.addWidget(self.autostart_cb)
         layout.addWidget(self.run_cb)
 
         nav = QHBoxLayout()
-        self.prev_btn = QPushButton("◀ Geri")
-        self.next_btn = QPushButton("İleri ▶")
-        self.all_btn = QPushButton("Hepsini kısayol oluştur")
+        self.prev_btn = QPushButton(i18n.t("nav_prev"))
+        self.next_btn = QPushButton(i18n.t("nav_next"))
+        self.all_btn = QPushButton(i18n.t("all_shortcuts"))
         nav.addWidget(self.prev_btn)
         nav.addWidget(self.next_btn)
         nav.addStretch(1)
@@ -393,7 +391,7 @@ class MultiResultDialog(QDialog):
         layout.addLayout(nav)
 
         bottom = QHBoxLayout()
-        self.ok_btn = QPushButton("TAMAM")
+        self.ok_btn = QPushButton(i18n.t("ok"))
         self.ok_btn.setDefault(True)
         bottom.addStretch(1)
         bottom.addWidget(self.ok_btn)
@@ -453,7 +451,7 @@ class MultiResultDialog(QDialog):
         if time.monotonic() - self._shown_at < 0.4:
             return
         reply = QMessageBox.question(
-            self, "Onay", "Tüm uygulamalar için kısayol oluşturulsun mu?",
+            self, i18n.t("ok"), i18n.t("confirm_all"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes:
