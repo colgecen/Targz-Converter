@@ -96,14 +96,17 @@ class ResultDialog(QDialog):
         buttons = QHBoxLayout()
         self.run_now = QPushButton(i18n.t("run_now"))
         self.close_button = QPushButton(i18n.t("ok"))
+        self.cancel_button = QPushButton(i18n.t("cancel"))
         self.close_button.setDefault(True)
         buttons.addStretch(1)
         buttons.addWidget(self.run_now)
         buttons.addWidget(self.close_button)
+        buttons.addWidget(self.cancel_button)
         layout.addLayout(buttons)
 
         self.run_now.clicked.connect(lambda: self._finish(launch=True))
         self.close_button.clicked.connect(lambda: self._finish(launch=False))
+        self.cancel_button.clicked.connect(self.reject)
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().showEvent(event)

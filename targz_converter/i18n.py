@@ -189,7 +189,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "tr": "TAMAM", "en": "OK", "es": "ACEPTAR", "it": "OK", "fr": "OK",
         "ar": "موافق", "pt": "OK",
     },
-    "multi_title": {
+        "cancel": {
+        "tr": "İptal", "en": "Cancel", "es": "Cancelar", "it": "Annulla",
+        "fr": "Annuler", "ar": "إلغاء", "pt": "Cancelar",
+    },
+"multi_title": {
         "tr": "Toplu dönüşüm sonucu", "en": "Batch conversion result",
         "es": "Resultado de conversión por lotes", "it": "Risultato conversione batch",
         "fr": "Résultat de la conversion par lot", "ar": "نتيجة التحويل المجمع",
