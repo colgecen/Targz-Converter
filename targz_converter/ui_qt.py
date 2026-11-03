@@ -174,6 +174,8 @@ class Window(QWidget):
         self.base = base
         self.worker: Worker | None = None
         self.multi_worker: MultiWorker | None = None
+        self._multi_total: int = 0
+        self._multi_lines: list[str] = []
         self.setWindowTitle(i18n.t("app_title"))
         self.resize(640, 300)
         self.setAcceptDrops(True)
@@ -245,8 +247,11 @@ class Window(QWidget):
             self.status.setText(f"{path.name} desteklenmiyor "
                                 f"(.tar.gz, .tgz, .tar.xz, .AppImage olur)")
 
-    def _on_multi_progress(self, _index: int, message: str) -> None:
-        self.log.setPlainText(message)
+    def _on_multi_progress(self, index: int, message: str) -> None:
+        if not self._multi_lines or index >= len(self._multi_lines):
+            self._multi_lines = (self._multi_lines or []) + [""] * (index + 1 - len(self._multi_lines or []))
+        self._multi_lines[index] = message
+        self.log.setPlainText("\n".join(line for line in self._multi_lines if line))
         self.status.setText(message)
 
     def _on_multi_failed(self, _index: int, message: str) -> None:
