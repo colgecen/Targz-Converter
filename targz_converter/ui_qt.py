@@ -242,6 +242,11 @@ class Window(QWidget):
         for label, path in dialog.written.items():
             self.log.append(f"  {label}: {path}")
         self.name.clear()
+        # Sonuç penceresi kapandıktan sonra durum ve günlük sıfırlansın.
+        self.log.clear()
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        self.status.setText("Hazır — yeni bir arşiv sürükle veya seç.")
 
     def _on_failed(self, message: str) -> None:
         self.bar.setRange(0, 100)
