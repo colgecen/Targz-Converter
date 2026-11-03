@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+#
+# tar-gz — Targz Converter derleme/paketleme araci
+#
+# Kullanim:
+#   ./tar-gz                      -> interaktif menü (format sec -> paketle)
+#   ./tar-gz --list               -> paket seceneklerini listele
+#   ./tar-gz linux targz           -> direkt paketle (argümanli, menüsüz)
+#   ./tar-gz linux zip
+#   ./tar-gz --install            -> ~/.local/bin'e sembolik bag kur,
+#                                    sonra her klasörden `tar-gz` yazman yeterli
+#   ./tar-gz --help               -> yardim
+#
+set -euo pipefail
+
+VERSION="${VERSION:-1.0.0}"
+resolve_root() {
+  local src="${BASH_SOURCE[0]}"
+  while [ -L "$src" ]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+ROOT="$(resolve_root)"
+
+banner() {
+  echo "=============================================="
+  echo "  Targz Converter — tar-gz paketleme araci  v$VERSION"
+  echo "=============================================="
+}
+
+usage() {
+  banner
+  echo
+  echo "Kullanim:"
+  echo "  ./tar-gz                     Interaktif menü"
+  echo "  ./tar-gz <os> <format>        Direkt paketle"
+  echo "  ./tar-gz --list              Secenekleri listele"
+  echo "  ./tar-gz --install           Komutu sisteme kur (her yerden 'tar-gz')"
+  echo "  ./tar-gz --help              Bu yardim"
+  echo
+  echo "Hedefler:"
+  echo "  linux   : targz | zip"
+  echo
+  echo "Ornekler:"
+  echo "  ./tar-gz linux targz"
+  echo "  ./tar-gz linux zip"
+  echo "  VERSION=1.1.0 ./tar-gz linux targz"
+}
+
+list_targets() {
+  echo "linux   : targz (.tar.gz) | zip (.zip)"
+}
+
+do_install() {
+  local bindir="$HOME/.local/bin"
+  mkdir -p "$bindir"
+  ln -sf "$ROOT/tar-gz" "$bindir/tar-gz"
+  echo "Kuruldu: $bindir/tar-gz -> $ROOT/tar-gz"
+  case ":$PATH:" in
+    *":$bindir:"*) echo "PATH zaten '$bindir' iceriyor. Artik her klasorden 'tar-gz' yazabilirsin." ;;
+    *)
+      echo "NOT: '$bindir' PATH'te yok. Su satiri ~/.bashrc'ye ekle:"
+      echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+      ;;
+  esac
+}
+
+package_targz() {
+  mkdir -p "$ROOT/build"
+  local out="$ROOT/build/targz-converter-$VERSION.tar.gz"
+  echo "==> tar.gz paketleniyor: $out"
+  tar --exclude='./.git' --exclude='./build' --exclude='./__pycache__' \
+      --exclude='*.pyc' -czf "$out" -C "$ROOT" .
+  echo "==> $out"
+}
+
+package_zip() {
+  mkdir -p "$ROOT/build"
+  local out="$ROOT/build/targz-converter-$VERSION.zip"
+  echo "==> zip paketleniyor: $out"
+  (cd "$ROOT" && zip -r "$out" . -x '.git/*' 'build/*' '__pycache__/*' '*.pyc' >/dev/null)
+  echo "==> $out"
+}
+
+build_target() {
+  local os="$1" fmt="$2"
+  banner
+  echo "Hedef: OS=$os  Format=$fmt  Version=$VERSION"
+  echo
+  case "$os" in
+    linux)
+      case "$fmt" in
+        targz|tar.gz) package_targz ;;
+        zip) package_zip ;;
+        *)
+          echo "Bilinmeyen linux formati: $fmt (gecerli: targz | zip)"
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "Bilinmeyen OS: $os (gecerli: linux)"
+      exit 1
+      ;;
+  esac
+  echo
+  echo "Bitti."
+}
+
+interactive() {
+  banner
+  echo
+  echo "Paket formati sec:"
+  select f in "tar.gz (.tar.gz)" "zip (.zip)" "Vazgec"; do
+    case "$REPLY" in
+      1) FMT="targz"; break ;;
+      2) FMT="zip"; break ;;
+      3|"") echo "Vazgecildi."; exit 0 ;;
+      *) echo "Gecersiz secim, tekrar dene." ;;
+    esac
+  done
+  build_target "linux" "$FMT"
+}
+
+if [ $# -eq 0 ]; then
+  interactive
+  exit 0
+fi
+
+case "${1:-}" in
+  -h|--help|help)
+    usage
+    ;;
+  -l|--list|list)
+    list_targets
+    ;;
+  --install|install)
+    do_install
+    ;;
+  --version|-v)
+    echo "tar-gz $VERSION"
+    ;;
+  linux)
+    if [ $# -lt 2 ]; then
+      echo "Format eksik. Ornek: ./tar-gz linux targz"
+      list_targets
+      exit 1
+    fi
+    OS="$1"; FMT="$2"
+    if [ $# -ge 3 ]; then
+      VERSION="$3"
+    fi
+    build_target "$OS" "$FMT"
+    ;;
+  *)
+    echo "Bilinmeyen komut: $1"
+    echo
+    usage
+    exit 1
+    ;;
+esac
