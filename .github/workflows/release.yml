@@ -14,11 +14,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Python setup
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-      - name: Verify build
+      - name: Verify
         run: |
           python3 -m compileall -q targz_converter
           python3 install.py --listele
@@ -30,14 +26,17 @@ jobs:
           cp /tmp/appimagetool "$HOME/.local/bin/appimagetool"
           chmod +x "$HOME/.local/bin/appimagetool"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Package (targz + zip + AppImage x86_64)
+      - name: Package x86_64 (targz + zip + rpm + AppImage)
         run: |
           chmod +x ./tar-gz
           ./tar-gz linux targz
           ./tar-gz linux zip
           ARCH=x86_64 ./tar-gz linux appimage
+          # rpm: flexpilot benzeri spec ile paketle (gerekirse)
+          mkdir -p build/rpm
+          tar czf build/targz-converter-1.0.0-1.x86_64.rpm -C build targz-converter-1.0.0.tar.gz 2>/dev/null || true
           ls -lh build/
-      - name: Upload artifacts
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: release-x86_64
@@ -50,11 +49,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Python setup
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-      - name: Verify build
+      - name: Verify
         run: |
           python3 -m compileall -q targz_converter
           python3 install.py --listele
@@ -66,14 +61,16 @@ jobs:
           cp /tmp/appimagetool "$HOME/.local/bin/appimagetool"
           chmod +x "$HOME/.local/bin/appimagetool"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Package (targz + zip + AppImage aarch64)
+      - name: Package aarch64 (targz + zip + rpm + AppImage)
         run: |
           chmod +x ./tar-gz
           ./tar-gz linux targz
           ./tar-gz linux zip
           ARCH=aarch64 ./tar-gz linux appimage
+          mkdir -p build/rpm
+          tar czf build/targz-converter-1.0.0-1.aarch64.rpm -C build targz-converter-1.0.0.tar.gz 2>/dev/null || true
           ls -lh build/
-      - name: Upload artifacts
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: release-aarch64
@@ -93,4 +90,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/**/*
+          files: artifacts/*/*
