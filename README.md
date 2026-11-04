@@ -4,6 +4,10 @@
 
 ## Features
 
+<p align="center">
+  <img src="assets/targz-converter.gif" alt="Targz Converter demo" width="700">
+</p>
+
 - Convert `.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.AppImage`, `.rpm`, `.deb`, `.zip` and `.7z` archives into Linux apps
 - Drag-and-drop window, file picker and command-line interface
 - Dolphin (KDE) right-click menu and Nautilus (GNOME) script integration

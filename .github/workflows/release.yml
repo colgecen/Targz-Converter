@@ -9,23 +9,20 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-x86_64:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Python setup
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-
       - name: Verify build
         run: |
           python3 -m compileall -q targz_converter
           python3 install.py --listele
-
-      - name: Install tools
+      - name: Install appimagetool
         run: |
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
           chmod +x /tmp/appimagetool
@@ -33,20 +30,67 @@ jobs:
           cp /tmp/appimagetool "$HOME/.local/bin/appimagetool"
           chmod +x "$HOME/.local/bin/appimagetool"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
-      - name: Package (targz + zip + AppImage)
+      - name: Package (targz + zip + AppImage x86_64)
         run: |
           chmod +x ./tar-gz
           ./tar-gz linux targz
           ./tar-gz linux zip
-          ./tar-gz linux appimage
+          ARCH=x86_64 ./tar-gz linux appimage
           ls -lh build/
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-x86_64
+          path: build/
+          if-no-files-found: error
+        if: always()
 
+  build-aarch64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Verify build
+        run: |
+          python3 -m compileall -q targz_converter
+          python3 install.py --listele
+      - name: Install appimagetool
+        run: |
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage -O /tmp/appimagetool
+          chmod +x /tmp/appimagetool
+          mkdir -p "$HOME/.local/bin"
+          cp /tmp/appimagetool "$HOME/.local/bin/appimagetool"
+          chmod +x "$HOME/.local/bin/appimagetool"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Package (targz + zip + AppImage aarch64)
+        run: |
+          chmod +x ./tar-gz
+          ./tar-gz linux targz
+          ./tar-gz linux zip
+          ARCH=aarch64 ./tar-gz linux appimage
+          ls -lh build/
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-aarch64
+          path: build/
+          if-no-files-found: error
+        if: always()
+
+  release:
+    needs: [build-x86_64, build-aarch64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: |
-            build/*.tar.gz
-            build/*.zip
-            build/*.AppImage
+          files: artifacts/**/*
