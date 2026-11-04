@@ -25,7 +25,7 @@ jobs:
           python3 -m compileall -q targz_converter
           python3 install.py --listele
 
-      - name: Install appimagetool
+      - name: Install tools
         run: |
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
           chmod +x /tmp/appimagetool
