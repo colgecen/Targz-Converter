@@ -104,7 +104,7 @@ APPRUN
   local out="$ROOT/build/Targz-Converter-$ARCH.AppImage"
   echo "==> AppImage paketleniyor: $out"
   set +e
-  ${APPIMAGETOOL_CMD:-appimagetool} "$appdir" "$out" > /tmp/appimage.log 2>&1
+  ARCH="$ARCH" ${APPIMAGETOOL_CMD:-appimagetool} "$appdir" "$out" > /tmp/appimage.log 2>&1
   rc1=$?
   cat /tmp/appimage.log
   if [ $rc1 -ne 0 ] && [ ! -f "$out" ]; then
