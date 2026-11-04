@@ -103,7 +103,10 @@ APPRUN
 
   local out="$ROOT/build/Targz-Converter-$ARCH.AppImage"
   echo "==> AppImage paketleniyor: $out"
-  ARCH="$ARCH" appimagetool "$appdir" "$out" >/dev/null 2>&1 || APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$ARCH" appimagetool "$appdir" "$out"
+  ARCH="$ARCH" appimagetool "$appdir" "$out" > /tmp/appimage.log 2>&1 || (
+    APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$ARCH" appimagetool "$appdir" "$out" > /tmp/appimage.log 2>&1 || ARCH="$ARCH" appimagetool "$appdir" "$out"
+  )
+  cat /tmp/appimage.log
   chmod +x "$out"
   rm -rf "$appdir"
   echo "==> $out"
