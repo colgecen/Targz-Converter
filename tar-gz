@@ -103,10 +103,14 @@ APPRUN
 
   local out="$ROOT/build/Targz-Converter-$ARCH.AppImage"
   echo "==> AppImage paketleniyor: $out"
-  ARCH="$ARCH" appimagetool "$appdir" "$out" > /tmp/appimage.log 2>&1 || (
-    APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$ARCH" appimagetool "$appdir" "$out" > /tmp/appimage.log 2>&1 || ARCH="$ARCH" appimagetool "$appdir" "$out"
-  )
+  # Önce extract ile test et: FUSE yoksa --appimage-extract ile çalıştır.
+  APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$ARCH" appimagetool "$appdir" "$out" > /tmp/appimage.log 2>&1 || ARCH="$ARCH" appimagetool "$appdir" "$out" > /tmp/appimage.log 2>&1
   cat /tmp/appimage.log
+  if [ ! -f "$out" ]; then
+    echo "AppImage üretilemedi, log:"
+    cat /tmp/appimage.log
+    exit 1
+  fi
   chmod +x "$out"
   rm -rf "$appdir"
   echo "==> $out"
