@@ -44,16 +44,18 @@ usage() {
   echo "  ./tar-gz --help              Bu yardim"
   echo
   echo "Hedefler:"
-  echo "  linux   : targz | zip"
+  echo "  linux   : appimage | targz | zip | rpm"
   echo
   echo "Ornekler:"
   echo "  ./tar-gz linux targz"
   echo "  ./tar-gz linux zip"
+  echo "  ./tar-gz linux rpm"
+  echo "  ARCH=aarch64 ./tar-gz linux appimage"
   echo "  VERSION=1.1.0 ./tar-gz linux targz"
 }
 
 list_targets() {
-  echo "linux   : appimage (.AppImage) | targz (.tar.gz) | zip (.zip)"
+  echo "linux   : appimage (.AppImage) | targz (.tar.gz) | zip (.zip) | rpm (.rpm)"
 }
 
 do_install() {
@@ -119,7 +121,7 @@ APPRUN
 
 package_targz() {
   mkdir -p "$ROOT/build"
-  local out="$ROOT/build/targz-converter-$VERSION.tar.gz"
+  local out="$ROOT/build/targz-converter-$VERSION-$ARCH.tar.gz"
   echo "==> tar.gz paketleniyor: $out"
   tar --exclude='./.git' --exclude='./build' --exclude='./__pycache__' \
       --exclude='*.pyc' -czf "$out" -C "$ROOT" .
@@ -128,10 +130,97 @@ package_targz() {
 
 package_zip() {
   mkdir -p "$ROOT/build"
-  local out="$ROOT/build/targz-converter-$VERSION.zip"
+  local out="$ROOT/build/targz-converter-$VERSION-$ARCH.zip"
   echo "==> zip paketleniyor: $out"
   (cd "$ROOT" && zip -r "$out" . -x '.git/*' 'build/*' '__pycache__/*' '*.pyc' >/dev/null)
   echo "==> $out"
+}
+
+package_rpm() {
+  if ! command -v rpmbuild >/dev/null 2>&1; then
+    echo "rpmbuild bulunamadi. Kur: sudo dnf install rpm-build / sudo apt install rpm" >&2
+    exit 1
+  fi
+  mkdir -p "$ROOT/build"
+  local name="targz-converter"
+  local ver="$VERSION"
+  local rpmarch
+  case "$ARCH" in
+    arm64|aarch64) rpmarch="aarch64" ;;
+    amd64|x86_64|x64) rpmarch="x86_64" ;;
+    *) rpmarch="$ARCH" ;;
+  esac
+  local top="$ROOT/build/rpmbuild"
+  rm -rf "$top"
+  mkdir -p "$top"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+  local src="$name-$ver"
+  local stage="$top/$src"
+  mkdir -p "$stage"
+  cp -r "$ROOT/targz_converter" "$stage/"
+  cp "$ROOT/targz2app.py" "$ROOT/install.py" "$ROOT/LICENSE" "$stage/" 2>/dev/null || true
+  [ -d "$ROOT/assets" ] && cp -r "$ROOT/assets" "$stage/"
+  find "$stage" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+  find "$stage" -name '*.pyc' -delete 2>/dev/null || true
+  tar -czf "$top/SOURCES/$src.tar.gz" -C "$top" "$src"
+
+  cat > "$top/SPECS/$name.spec" <<SPEC
+%define debug_package %{nil}
+Name:           $name
+Version:        $ver
+Release:        1
+Summary:        Convert archives into runnable apps in Linux
+License:        MIT
+URL:            https://github.com/colgecen/Targz-Converter
+Source0:        %{name}-%{version}.tar.gz
+BuildArch:      $rpmarch
+Requires:       python3
+Requires:       tar
+Requires:       unzip
+
+%description
+Targz Converter turns tar.gz, tgz, tar.xz, tar.bz2, AppImage, rpm, deb,
+zip and 7z archives into runnable Linux applications with a desktop
+shortcut and icon. This package installs the tool under /opt.
+
+%prep
+%setup -q
+
+%build
+# Python sources; nothing to compile.
+
+%install
+mkdir -p %{buildroot}/opt/$name
+cp -r targz_converter targz2app.py install.py assets %{buildroot}/opt/$name/ 2>/dev/null || true
+mkdir -p %{buildroot}/usr/bin
+cat > %{buildroot}/usr/bin/targz-converter <<'LAUNCHER'
+#!/bin/sh
+exec python3 /opt/targz-converter/targz2app.py "\$@"
+LAUNCHER
+chmod 0755 %{buildroot}/usr/bin/targz-converter
+
+%files
+/opt/$name
+/usr/bin/targz-converter
+
+%changelog
+* $(LC_ALL=C date +"%a %b %d %Y") Targz Converter <noreply@github.com> - $ver-1
+- Release $ver
+SPEC
+
+  local out
+  echo "==> rpm paketleniyor ($rpmarch)"
+  rpmbuild --define "_topdir $top" --target "$rpmarch" -bb "$top/SPECS/$name.spec" > /tmp/rpm.log 2>&1 || {
+    echo "rpmbuild basarisiz, log:" >&2
+    tail -40 /tmp/rpm.log >&2
+    exit 1
+  }
+  out="$(find "$top/RPMS" -name '*.rpm' | head -1)"
+  if [ -z "$out" ]; then
+    echo "rpm uretilemedi" >&2
+    exit 1
+  fi
+  cp "$out" "$ROOT/build/"
+  echo "==> $ROOT/build/$(basename "$out")"
 }
 
 build_target() {
@@ -145,8 +234,9 @@ build_target() {
         appimage) package_appimage ;;
         targz|tar.gz) package_targz ;;
         zip) package_zip ;;
+        rpm) package_rpm ;;
         *)
-          echo "Bilinmeyen linux formati: $fmt (gecerli: targz | zip)"
+          echo "Bilinmeyen linux formati: $fmt (gecerli: appimage | targz | zip | rpm)"
           exit 1
           ;;
       esac
@@ -164,12 +254,13 @@ interactive() {
   banner
   echo
   echo "Paket formati sec:"
-  select f in "AppImage (.AppImage)" "tar.gz (.tar.gz)" "zip (.zip)" "Vazgec"; do
+  select f in "AppImage (.AppImage)" "tar.gz (.tar.gz)" "zip (.zip)" "rpm (.rpm)" "Vazgec"; do
     case "$REPLY" in
       1) FMT="appimage"; break ;;
       2) FMT="targz"; break ;;
       3) FMT="zip"; break ;;
-      4|"") echo "Vazgecildi."; exit 0 ;;
+      4) FMT="rpm"; break ;;
+      5|"") echo "Vazgecildi."; exit 0 ;;
       *) echo "Gecersiz secim, tekrar dene." ;;
     esac
   done

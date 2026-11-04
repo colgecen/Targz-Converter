@@ -9,78 +9,74 @@ permissions:
   contents: write
 
 jobs:
-  build-x86_64:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install fuse for AppImage
-        run: |
-          sudo apt-get update && sudo apt-get install -y fuse libfuse2 || true
-      - name: Install appimagetool
-        run: |
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
-          chmod +x /tmp/appimagetool
-          /tmp/appimagetool --appimage-extract > /dev/null 2>&1 || true
-          mkdir -p "$HOME/.local/bin"
-          cp /tmp/appimagetool "$HOME/.local/bin/appimagetool"
-          chmod +x "$HOME/.local/bin/appimagetool"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Package x86_64 (targz + zip + AppImage)
-        run: |
-          chmod +x ./tar-gz
-          ./tar-gz linux targz
-          ./tar-gz linux zip
-          ARCH=x86_64 ./tar-gz linux appimage
-          ls -lh build/
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-x86_64
-          path: build/
-          if-no-files-found: error
-        if: always()
 
-  build-aarch64:
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install fuse for AppImage
+      - name: System tools
         run: |
-          sudo apt-get update && sudo apt-get install -y fuse libfuse2 || true
-      - name: Install appimagetool
+          sudo apt-get update
+          sudo apt-get install -y rpm zip
+
+      - name: Verify sources
         run: |
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage -O /tmp/appimagetool
-          chmod +x /tmp/appimagetool
-          /tmp/appimagetool --appimage-extract > /dev/null 2>&1 || true
+          python3 -m compileall -q targz_converter
+          python3 install.py --listele
+
+      - name: Install appimagetool (extracted, no FUSE needed)
+        run: |
           mkdir -p "$HOME/.local/bin"
-          cp /tmp/appimagetool "$HOME/.local/bin/appimagetool"
+          URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage"
+          wget -q "$URL" -O /tmp/appimagetool
+          chmod +x /tmp/appimagetool
+          cd /tmp
+          rm -rf squashfs-root appimagetool-extracted
+          /tmp/appimagetool --appimage-extract > /dev/null
+          mv /tmp/squashfs-root /tmp/appimagetool-extracted
+          printf '#!/bin/sh\nexec /tmp/appimagetool-extracted/AppRun "$@"\n' > "$HOME/.local/bin/appimagetool"
           chmod +x "$HOME/.local/bin/appimagetool"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Package aarch64 (targz + zip + AppImage)
+          "$HOME/.local/bin/appimagetool" --version
+
+      - name: Package ${{ matrix.arch }}
         run: |
           chmod +x ./tar-gz
-          ./tar-gz linux targz
-          ./tar-gz linux zip
-          ARCH=aarch64 ./tar-gz linux appimage
+          ARCH=${{ matrix.arch }} ./tar-gz linux targz
+          ARCH=${{ matrix.arch }} ./tar-gz linux zip
+          ARCH=${{ matrix.arch }} ./tar-gz linux rpm
+          ARCH=${{ matrix.arch }} ./tar-gz linux appimage
           ls -lh build/
-      - name: Upload
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-aarch64
-          path: build/
+          name: release-${{ matrix.arch }}
+          path: |
+            build/*.tar.gz
+            build/*.zip
+            build/*.rpm
+            build/*.AppImage
           if-no-files-found: error
-        if: always()
 
   release:
-    needs: [build-x86_64, build-aarch64]
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
