@@ -14,27 +14,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Verify
+      - name: Install fuse for AppImage
         run: |
-          python3 -m compileall -q targz_converter
-          python3 install.py --listele
+          sudo apt-get update && sudo apt-get install -y fuse libfuse2 || true
       - name: Install appimagetool
         run: |
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
           chmod +x /tmp/appimagetool
+          /tmp/appimagetool --appimage-extract > /dev/null 2>&1 || true
           mkdir -p "$HOME/.local/bin"
           cp /tmp/appimagetool "$HOME/.local/bin/appimagetool"
           chmod +x "$HOME/.local/bin/appimagetool"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Package x86_64 (targz + zip + rpm + AppImage)
+      - name: Package x86_64 (targz + zip + AppImage)
         run: |
           chmod +x ./tar-gz
           ./tar-gz linux targz
           ./tar-gz linux zip
           ARCH=x86_64 ./tar-gz linux appimage
-          # rpm: flexpilot benzeri spec ile paketle (gerekirse)
-          mkdir -p build/rpm
-          tar czf build/targz-converter-1.0.0-1.x86_64.rpm -C build targz-converter-1.0.0.tar.gz 2>/dev/null || true
           ls -lh build/
       - name: Upload
         uses: actions/upload-artifact@v4
@@ -49,26 +46,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Verify
+      - name: Install fuse for AppImage
         run: |
-          python3 -m compileall -q targz_converter
-          python3 install.py --listele
+          sudo apt-get update && sudo apt-get install -y fuse libfuse2 || true
       - name: Install appimagetool
         run: |
           wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-aarch64.AppImage -O /tmp/appimagetool
           chmod +x /tmp/appimagetool
+          /tmp/appimagetool --appimage-extract > /dev/null 2>&1 || true
           mkdir -p "$HOME/.local/bin"
           cp /tmp/appimagetool "$HOME/.local/bin/appimagetool"
           chmod +x "$HOME/.local/bin/appimagetool"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Package aarch64 (targz + zip + rpm + AppImage)
+      - name: Package aarch64 (targz + zip + AppImage)
         run: |
           chmod +x ./tar-gz
           ./tar-gz linux targz
           ./tar-gz linux zip
           ARCH=aarch64 ./tar-gz linux appimage
-          mkdir -p build/rpm
-          tar czf build/targz-converter-1.0.0-1.aarch64.rpm -C build targz-converter-1.0.0.tar.gz 2>/dev/null || true
           ls -lh build/
       - name: Upload
         uses: actions/upload-artifact@v4

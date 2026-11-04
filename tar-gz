@@ -104,17 +104,12 @@ APPRUN
   local out="$ROOT/build/Targz-Converter-$ARCH.AppImage"
   echo "==> AppImage paketleniyor: $out"
   set +e
-  APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$ARCH" appimagetool "$appdir" "$out" > /tmp/appimage.log 2>&1
+  ${APPIMAGETOOL_CMD:-appimagetool} "$appdir" "$out" > /tmp/appimage.log 2>&1
   rc1=$?
-  if [ $rc1 -ne 0 ] || [ ! -f "$out" ]; then
-    ARCH="$ARCH" appimagetool "$appdir" "$out" > /tmp/appimage.log 2>&1
-    rc2=$?
-    cat /tmp/appimage.log
-    if [ $rc2 -ne 0 ] && [ ! -f "$out" ]; then
-      echo "AppImage üretilemedi, ilk deneme rc=$rc1 ikinci rc=$rc2"
-      cat /tmp/appimage.log
-      exit 1
-    fi
+  cat /tmp/appimage.log
+  if [ $rc1 -ne 0 ] && [ ! -f "$out" ]; then
+    echo "AppImage üretilemedi rc=$rc1"
+    exit 1
   fi
   set -e
   chmod +x "$out"
