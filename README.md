@@ -51,7 +51,7 @@ Configuration and installed apps live under `~/.local/share/Applications/`.
 ## Screenshots
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="Targz Converter main window">
+  <img src="assets/targz-converter-README.png" alt="Targz Converter main window">
 </p>
 
 ## License

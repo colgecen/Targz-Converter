@@ -9,21 +9,44 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Depoyu al
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Sürümü doğrula
+      - name: Python setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Verify build
         run: |
           python3 -m compileall -q targz_converter
           python3 install.py --listele
 
-      - name: GitHub Release oluştur
+      - name: Install appimagetool
+        run: |
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
+          chmod +x /tmp/appimagetool
+          mkdir -p "$HOME/.local/bin"
+          cp /tmp/appimagetool "$HOME/.local/bin/appimagetool"
+          chmod +x "$HOME/.local/bin/appimagetool"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Package (targz + zip + AppImage)
+        run: |
+          chmod +x ./tar-gz
+          ./tar-gz linux targz
+          ./tar-gz linux zip
+          ./tar-gz linux appimage
+          ls -lh build/
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            targz2app.py
-            install.py
+            build/*.tar.gz
+            build/*.zip
+            build/*.AppImage
